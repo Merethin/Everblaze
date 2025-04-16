@@ -79,8 +79,8 @@ Press Ctrl+Q to quit.
 ## Contact
 
 If you have any questions about this tool, contact me using one of the following:
-NationStates telegrams: https://nationstates.net/nation=merethin
-Discord: @ns_merethin
+- NationStates telegrams: https://nationstates.net/nation=merethin
+- Discord: @ns_merethin
 
 ## Disclaimer
 This program is provided as-is with no guarantees of legality or compliance with the NationStates API rules. While I have tried my best to comply with them, it is the responsibility of every user to understand and insure the scripts they run are legal. You assume all risks.
