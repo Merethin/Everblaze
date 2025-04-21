@@ -67,6 +67,11 @@ The `remove` command will remove a region from the trigger list.
 remove Region Name
 ```
 
+A plus and minus sign can be used as aliases for the add and remove commands:
+
+`+ region name`
+`- region_name_2`
+
 The `clear` command will clear the output log.
 ```
 clear

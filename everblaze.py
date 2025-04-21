@@ -39,9 +39,9 @@ class CommandInput(Input):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.split(" ", 1)
 
-        if command[0] == "add":
+        if command[0] == "add" or command[0] == "+":
             self.app.post_message(self.AddTarget(util.format_nation_or_region(command[1])))
-        elif command[0] == "remove":
+        elif command[0] == "remove" or command[0] == "-":
             self.app.post_message(self.RemoveTarget(util.format_nation_or_region(command[1])))
         elif command[0] == "clear":
             self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.ClearLog())
