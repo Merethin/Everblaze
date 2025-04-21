@@ -231,7 +231,6 @@ class TriggerApp(App):
             targets.remove(event.target)
 
             self.get_widget_by_id("triggers", expect_type=TriggerList).post_message(TriggerList.RefreshTriggerList())
-            self.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.RelaunchSSE())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="trigger tool", description="Versatile triggering tool for NationStates R/D")
