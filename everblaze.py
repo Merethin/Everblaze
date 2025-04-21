@@ -94,6 +94,9 @@ class OutputLog(RichLog):
 
         self.post_message(self.RelaunchSSE()) # More like launch instead of relaunch here
 
+        if len(targets) != 0:
+            self.post_message(self.WriteLog("\u2e30 Ready! Waiting for targets."))
+
     # fixme: How can we render rich text here??
     @on(WriteLog)
     def on_write_log(self, event: WriteLog):
