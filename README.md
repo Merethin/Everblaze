@@ -78,13 +78,19 @@ snipe <Region Name>;<major|minor>;<delay>m|s;<early_tolerance>;<late_tolerance>
 ```
 
 Parameters:
+
 `Region Name`: The target to find a trigger for.
+
 `major|minor`: Either "major" or "minor", depending on the update the trigger will be used for.
+
 `delay`: The amount of time before the target that the trigger should update at. Can be provided in minutes (example: `5m`) or in seconds: (example: `12s`).
 
 Tolerance parameters:
+
 If no region is found to update exactly `delay` time before the target, how much earlier or later can we search for a trigger?
+
 `early_tolerance`: How many seconds earlier a trigger can be. Set this to 0 if you want the trigger to be exactly at `delay` seconds before the target.
+
 `late_tolerance`: How many seconds later a trigger can be. Set this to 0 if you want the trigger to be exactly at `delay` seconds before the target.
 
 Example:
