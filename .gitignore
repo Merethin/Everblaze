@@ -1,0 +1,6 @@
+.env
+regions.db
+regions.xml
+__pycache__
+venv
+pidfile

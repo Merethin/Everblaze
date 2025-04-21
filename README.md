@@ -59,18 +59,41 @@ The command bar can be used to change the trigger list at runtime.
 
 The `add` command will add a region to the trigger list.
 ```
-add Region Name
+add <Region Name>
 ```
 
 The `remove` command will remove a region from the trigger list.
 ```
-remove Region Name
+remove <Region Name>
 ```
 
 The `clear` command will clear the output log.
 ```
 clear
 ```
+
+The `snipe` command will find a trigger region that updates X seconds before the target region, and add it to the trigger list.
+```
+snipe <Region Name>;<major|minor>;<delay>m|s;<early_tolerance>;<late_tolerance>
+```
+
+Parameters:
+`Region Name`: The target to find a trigger for.
+`major|minor`: Either "major" or "minor", depending on the update the trigger will be used for.
+`delay`: The amount of time before the target that the trigger should update at. Can be provided in minutes (example: `5m`) or in seconds: (example: `12s`).
+
+Tolerance parameters:
+If no region is found to update exactly `delay` time before the target, how much earlier or later can we search for a trigger?
+`early_tolerance`: How many seconds earlier a trigger can be. Set this to 0 if you want the trigger to be exactly at `delay` seconds before the target.
+`late_tolerance`: How many seconds later a trigger can be. Set this to 0 if you want the trigger to be exactly at `delay` seconds before the target.
+
+Example:
+```
+snipe Suspicious;minor;6s;1;1
+```
+
+This will find a trigger that updates 6 seconds before Suspicious at minor, ideally. If it can't find one, it'll try to find a trigger that updates 7s earlier (early tolerance of 1 second) or 5s earlier (late tolerance of 1 second). The trigger will then be added to the list, along with the delay that was picked in the end.
+
 
 ## Exiting the app
 
@@ -79,8 +102,8 @@ Press Ctrl+Q to quit.
 ## Contact
 
 If you have any questions about this tool, contact me using one of the following:
-- NationStates telegrams: https://nationstates.net/nation=merethin
-- Discord: @ns_merethin
+NationStates telegrams: https://nationstates.net/nation=merethin
+Discord: @ns_merethin
 
 ## Disclaimer
 This program is provided as-is with no guarantees of legality or compliance with the NationStates API rules. While I have tried my best to comply with them, it is the responsibility of every user to understand and insure the scripts they run are legal. You assume all risks.
