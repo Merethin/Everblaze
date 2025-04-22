@@ -47,7 +47,7 @@ class CommandInput(Input):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         command = event.value.split(" ", 1)
 
-        if command[0] == "add":
+        if command[0] == "add" or command[0] == "+":
             self.app.post_message(self.AddTarget(util.format_nation_or_region(command[1])))
         if command[0] == "snipe":
             match = re.match("([a-zA-Z0-9_ ]+);(minor|major);([0-9]+)(s|m);([0-9]+);([0-9]+)", command[1])
@@ -64,7 +64,7 @@ class CommandInput(Input):
                 self.app.post_message(self.SnipeTarget(util.format_nation_or_region(region_name), update, delay, int(early_tolerance), int(late_tolerance)))
             else:
                 self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog("\u2e30 Invalid command formatting (should be snipe <RegionName>;major|minor;<delay>s|m;<early>;<late>)."))
-        elif command[0] == "remove":
+        elif command[0] == "remove" or command[0] == "-":
             self.app.post_message(self.RemoveTarget(util.format_nation_or_region(command[1])))
         elif command[0] == "clear":
             self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.ClearLog())
