@@ -37,8 +37,19 @@ If you do not provide the `-n` flag, the program will prompt you to enter your m
 
 Example:
 ```
-python everblaze.py -t trigger_list.txt -n Merethin
+python tui.py -t trigger_list.txt -n Merethin
 ```
+
+Instead of the `-t` flag, one can use the `--raidfile` flag to provide a list of targets and associated triggers (note that this is not currently compatible with the raidfiles format used by programs like QuickDraw and zoomies, which is a feature planned for the future.)
+
+Example:
+```
+python tui.py --raidfile raidfile.txt -n Merethin
+```
+
+The first time you run the program, it will generate a region database from the daily data dumps, which will slow down startup.
+
+It is recommended to run the program with the `-r` flag (which regenerates the database) every so often to keep the database up to date. It is not required though, especially if you're running it mid-update.
 
 # Trigger list format
 
@@ -52,6 +63,20 @@ The North Pacific
 The_Plains_Of_Perdition
 warzone_trinidad
 ```
+
+# Raidfile format
+
+The raidfile list should be a newline-separated list of lines following this format: `<target> (<trigger>;<delay>s)`.
+The region names can have any capitalization and use either spaces or underscores.
+
+Example:
+```
+the south pacific (suspicious;4s)
+The North Pacific (lazarus;12s)
+The_Plains_Of_Perdition (artificial_solar_system;7s)
+warzone_trinidad (Warzone Asia;10s)
+```
+_Note: the triggers shown above are made up for illustration purposes and do not actually update as shown._
 
 ## Command bar
 
@@ -70,8 +95,8 @@ remove <Region Name>
 A plus and minus sign can be used as aliases for the add and remove commands:
  
 ```
-+ <region name>
-- <region_name_2>
++ <Region Name>
+- <Region Name 2>
 ```
 
 The `clear` command will clear the output log.

@@ -300,8 +300,12 @@ class TriggerApp(App):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="everblaze-tui", description="Versatile triggering tool for NationStates R/D")
-    parser.add_argument("-t", "--triglist", default="")
     parser.add_argument("-n", "--nation-name", default="")
+    parser.add_argument("-r", '--regenerate-db', action='store_true')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-t", "--triglist", default="")
+    group.add_argument("--raidfile", default="")
     args = parser.parse_args()
 
     nation = ""
@@ -310,13 +314,28 @@ if __name__ == "__main__":
     else:
         nation = input("Please enter your main nation name: ")
 
-    util.bootstrap(nation, False) # FIXME: Add command line parameter for regenerate_db
+    util.bootstrap(nation, args.regenerate_db)
 
     app = TriggerApp()
 
     if len(args.triglist) != 0:
         with open(args.triglist, "r") as trigger_file:
-            targets.add_triggers([util.format_nation_or_region(line.rstrip()) for line in trigger_file.readlines()])
+            targets.add_triggers([{"api_name": util.format_nation_or_region(line.rstrip())} for line in trigger_file.readlines()])
+            targets.sort_triggers(app.cursor)
+    elif len(args.raidfile) != 0:
+        with open(args.raidfile, "r") as raidfile:
+            for line in raidfile.readlines():
+                match = re.match(r"([a-zA-Z0-9_ ]+) \(([a-zA-Z0-9_ ]+);([0-9]+)s\)", line.rstrip())
+                if match is not None:
+                    groups = match.groups()
+                    target = groups[0]
+                    trigger = groups[1]
+                    delay = int(groups[2])
+                    targets.add_trigger({
+                        "target": target,
+                        "api_name": trigger,
+                        "delay": delay,
+                    })
             targets.sort_triggers(app.cursor)
 
     app.run()
