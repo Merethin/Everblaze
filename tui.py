@@ -4,12 +4,13 @@ from textual.widgets import Header, Footer, Static, Input, RichLog
 from textual import on, work
 from textual.message import Message
 from textual.worker import get_current_worker
-import zmq, re, argparse, sqlite3, typing
+import re, argparse, sqlite3, typing, json
 import utility as util
 
 # Global variables.
 targets = util.TriggerList() # The list of targets to watch for updates (can be modified at runtime).
 cursor = None # Database cursor
+nation_name = "" # The main nation of the player using this script
 
 # Input field to run commands.
 # Currently, these are the three supported commands:
@@ -134,26 +135,33 @@ class OutputLog(RichLog):
     # Update client/listener worker.
     @work(thread=True)
     def update_listener(self) -> None:
-        context = zmq.Context()
-        socket = context.socket(zmq.SUB)
-        socket.connect("tcp://localhost:6432")
-        socket.setsockopt(zmq.SUBSCRIBE, b'')
+        url = 'https://www.nationstates.net/api/admin/'
+        headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze by Merethin, used by {nation_name}"}
 
-        self.post_message(OutputLog.WriteLog(f"\u2e30 Connected to tcp://localhost:6432"))
+        client = util.connect_sse(url, headers)
 
-        while True:
+        self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(f"\u2e30 Connected to {url}."))
+        self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(f"\u2e30 User Agent: '{headers["User-Agent"]}'"))
+
+        for event in client:
             # We only notice this after a heartbeat arrives from the connection.
-            # Unfortunate, but checking manually is the only way to cancel a thread apparently.
-            # UNIX signals were too unreliable and thread-unsafe, huh? Quite the inconvenience.
             if get_current_worker().is_cancelled:
                 print("Cancelled thread, closing connection")
                 return
             
-            region = socket.recv_string()
+            if event.data: # If the event has no data it's a heartbeat. We do want to receive heartbeats however so that we can check for cancellation above.
+                data = json.loads(event.data)
+                happening = data["str"]
 
-            self.post_message(OutputLog.WriteLog(f"\u2e30 feed: {region} updated."))
+                # The happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
+                # and if so, retrieve the region name.
+                match = util.UPDATE_REGEX.match(happening)
+                if match is not None:
+                    region_name = match.groups()[0]
 
-            self.app.post_message(TriggerApp.RegionUpdate(region))
+                    print(f"log: {region_name} updated!")
+
+                    self.app.post_message(TriggerApp.RegionUpdate(region_name))
 
 def display_trigger(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
@@ -254,16 +262,20 @@ class TriggerApp(App):
 
         data = util.fetch_region_data_from_db(self.cursor, event.region)
 
+        if data is None:
+            return None
+
         already_updated = targets.remove_all_updated_triggers(data["update_index"])
         for trigger in already_updated:
-            self.post_message(OutputLog.WriteLog(f"\u2e30 {trigger["api_name"]} has already updated!"))
+            self.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(f"\u2e30 {trigger["api_name"]} has already updated!"))
+            self.get_widget_by_id("triggers", expect_type=TriggerList).post_message(TriggerList.RefreshTriggerList())
 
         target = targets.query_trigger(event.region)
 
         if target is not None:
-            self.post_message(OutputLog.WriteLog(format_update_log(target)))
-            self.post_message(OutputLog.Bell())
-            self.post_message(OutputLog.RemoveTarget(event.region))
+            self.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(format_update_log(target)))
+            self.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.Bell())
+            self.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.RemoveTarget(event.region))
 
     @on(CommandInput.SnipeTarget)
     def on_snipe_target(self, event: CommandInput.SnipeTarget) -> None:
@@ -309,13 +321,12 @@ if __name__ == "__main__":
     group.add_argument("--raidfile", default="")
     args = parser.parse_args()
 
-    nation = ""
     if len(args.nation_name) != 0:
-        nation = args.nation_name
+        nation_name = args.nation_name
     else:
-        nation = input("Please enter your main nation name: ")
+        nation_name = input("Please enter your main nation name: ")
 
-    util.bootstrap(nation, args.regenerate_db)
+    util.bootstrap(nation_name, args.regenerate_db)
 
     con = sqlite3.connect("regions.db")
     cursor = con.cursor()
@@ -343,4 +354,3 @@ if __name__ == "__main__":
     app = TriggerApp()
 
     app.run()
-    app.get_widget_by_id("output", expect_type=OutputLog).worker.cancel()

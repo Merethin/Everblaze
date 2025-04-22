@@ -66,7 +66,7 @@ def main():
     cursor = con.cursor()
     cursor.execute("CREATE TABLE regions(canon_name, api_name, update_index, seconds_major, seconds_minor)")
 
-    download_region_data_dump(args.nation_name)
+    download_region_data_dump(args.nation)
     region_data = parse_region_data("regions.xml")
 
     cursor.executemany("INSERT INTO regions VALUES(?, ?, ?, ?, ?)", region_data)

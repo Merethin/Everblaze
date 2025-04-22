@@ -1,4 +1,4 @@
-import threading, time, typing, sqlite3, os, subprocess, sys
+import threading, time, typing, sqlite3, os, subprocess, sys, sseclient, re, requests
 
 next_api_hit = 0 # Next time we can hit the API (in UNIX time). Starts at 0, so we can use it immediately the first time.
 next_api_hit_lock = threading.Lock()
@@ -30,9 +30,12 @@ def format_nation_or_region(name: str) -> str:
 
 # Fetch data for a region from the local database.
 # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
-def fetch_region_data_from_db(cursor: sqlite3.Cursor, region: str) -> typing.Dict:
+def fetch_region_data_from_db(cursor: sqlite3.Cursor, region: str) -> typing.Dict | None:
     cursor.execute("SELECT * FROM regions WHERE api_name = ?", [region])
     data = cursor.fetchone()
+
+    if data is None:
+        return None
 
     output = {}
     # Layout: (canon_name, api_name, update_index, seconds_major, seconds_minor)
@@ -83,13 +86,19 @@ def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: int, minor: bool
 
 # Fetch the update index for a region from the local database.
 # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
-def fetch_update_index(cursor: sqlite3.Cursor, region: str) -> int:
-    return fetch_region_data_from_db(cursor, region)["update_index"]
+def fetch_update_index(cursor: sqlite3.Cursor, region: str) -> int | None:
+    data = fetch_region_data_from_db(cursor, region)
+    if data is None:
+        return None
+    return data["update_index"]
 
 # Fetch the canonical name (how it's displayed on NationStates) for a region from the local database.
 # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
-def fetch_canon_name(cursor: sqlite3.Cursor, region: str) -> str:
-    return fetch_region_data_from_db(cursor, region)["canon_name"]
+def fetch_canon_name(cursor: sqlite3.Cursor, region: str) -> str | None:
+    data = fetch_region_data_from_db(cursor, region)
+    if data is None:
+        return None
+    return data["canon_name"]
 
 # List of triggers, with arbitrary additional values.
 class TriggerList:
@@ -163,28 +172,19 @@ class TriggerList:
 # If needed, generate the region database.
 # If regenerate_db is set to True, it will always be generated. 
 # Otherwise, it will only be generated if there isn't already one.
-# Additionally, start the Everblaze server if it's not already running.
 def bootstrap(nation: str, regenerate_db: bool):
     if(regenerate_db or not os.path.exists("regions.db")):
         subprocess.call([sys.executable, "db.py", nation]) 
 
-    # Start the server as a daemon.
-    command = [sys.executable, "server.py", nation]
-    if sys.platform == "win32":
-        subprocess.Popen(
-            command,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
-    else:
-        subprocess.Popen(
-            command,
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
+UPDATE_REGEX = re.compile(r"%%([a-z0-9_]+)%% updated\.")
+
+def connect_sse(url: str, headers: typing.Dict) -> sseclient.SSEClient:
+    try:
+        return sseclient.SSEClient(url, headers=headers)
+    except requests.HTTPError as e:
+        if e.response.status_code == 429: # API rate limit
+            retry_after = int(e.response.headers["Retry-After"])
+            time.sleep(retry_after)
+            return connect_sse(url, headers)
+        else:
+            raise e
