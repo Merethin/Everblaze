@@ -9,6 +9,7 @@ import utility as util
 
 # Global variables.
 targets = util.TriggerList() # The list of targets to watch for updates (can be modified at runtime).
+cursor = None # Database cursor
 
 # Input field to run commands.
 # Currently, these are the three supported commands:
@@ -203,10 +204,10 @@ class TriggerApp(App):
             super().__init__()
 
     def compose(self) -> ComposeResult:
+        global cursor
         self.title = "Everblaze"
 
-        self.con = sqlite3.connect("regions.db")
-        self.cursor = self.con.cursor()
+        self.cursor = cursor
 
         yield Header()
         yield Vertical(
@@ -316,12 +317,13 @@ if __name__ == "__main__":
 
     util.bootstrap(nation, args.regenerate_db)
 
-    app = TriggerApp()
+    con = sqlite3.connect("regions.db")
+    cursor = con.cursor()
 
     if len(args.triglist) != 0:
         with open(args.triglist, "r") as trigger_file:
             targets.add_triggers([{"api_name": util.format_nation_or_region(line.rstrip())} for line in trigger_file.readlines()])
-            targets.sort_triggers(app.cursor)
+            targets.sort_triggers(cursor)
     elif len(args.raidfile) != 0:
         with open(args.raidfile, "r") as raidfile:
             for line in raidfile.readlines():
@@ -336,7 +338,9 @@ if __name__ == "__main__":
                         "api_name": trigger,
                         "delay": delay,
                     })
-            targets.sort_triggers(app.cursor)
+            targets.sort_triggers(cursor)
+
+    app = TriggerApp()
 
     app.run()
     app.get_widget_by_id("output", expect_type=OutputLog).worker.cancel()
