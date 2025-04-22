@@ -20,11 +20,8 @@ msgpack==1.1.0
 multidict==6.4.3
 platformdirs==4.3.7
 propcache==0.3.1
+psutil==7.0.0
 Pygments==2.19.1
-<<<<<<< HEAD
-=======
-pyzmq==26.4.0
->>>>>>> 66eec07 (feat: Add 0MQ server, region database, and "snipe" command)
 requests==2.32.3
 rich==14.0.0
 six==1.17.0
@@ -36,7 +33,3 @@ typing_extensions==4.13.2
 uc-micro-py==1.0.3
 urllib3==2.4.0
 yarl==1.19.0
-<<<<<<< HEAD
-=======
-zmq==0.0.0
->>>>>>> 66eec07 (feat: Add 0MQ server, region database, and "snipe" command)
