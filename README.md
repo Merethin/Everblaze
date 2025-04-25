@@ -137,10 +137,72 @@ This will find a trigger that updates 6 seconds before Suspicious at minor, idea
 
 Press Ctrl+Q to quit.
 
+## Discord bot hosting
+
+The discord bot can be found in `bot.py`. To self-host it yourself (alternatively: ask me and I'll consider giving your server access to my own self-hosted version), go to https://discord.com/developers/applications, create a new application, go to the "Bot" section and copy its token.
+
+Create a file called `.env` and paste the token like this:
+```
+TOKEN = "<TOKEN>"```
+
+Still on the "Bot" tab, enable "Message Content Intent".
+
+To invite the bot to a server, go to the "Installation" tab, copy the discord provided Install Link, and go to the Oauth2 tab.
+
+Paste the install link into "Redirects" and configure the permissions in the following way.
+
+"OAuth2 URL Generator":
+Check "messages.read", "bot" and "applications.commands".
+Select the previously pasted install link in "Select Redirect URL."
+
+"Bot Permissions":
+Check "Send Messages", "Embed Links", "Mention Everyone", and "Use Slash Commands".
+
+After this, you can copy the "generated URL" given to you by Discord. This is the install link for your bot. Paste it in your browser, select a server, and you're done. Now run the bot.
+
+```
+python bot.py -n <NATION_NAME> -r
+```
+
+## Discord bot commands
+
+When added to any server, the server owner must run the following command first, in any channel:
+
+```/config @Setup Role @Ping Role #channel```
+
+@Setup Role: everyone who has this role will be able to add, remove, and view triggers in this server.
+
+@Ping Role: everyone who has this role will be pinged when a trigger updates.
+
+#channel: When a trigger updates, the message will be sent in this channel.
+
+Apart from that, the bot commands are almost identical to the TUI commands, except for one addition:
+
+```/add_target <target> <trigger> <delay>```
+
+This command is to import targets from tools like QuickDraw manually, as the Discord bot does not support importing trigger lists/raidfiles.
+
+Given a QuickDraw line like this:
+```
+2) https://www.nationstates.net/region=flevoland (0:1:48)
+	a) https://www.nationstates.net/template-overall=none/region=manama (6s)
+```
+
+The command should be:
+```/add_target flevoland manama 6```
+
+The delay is **not** checked. Whenever the trigger region updates, Everblaze will send out a ping saying the target region is about to update. If the delay is wrongly set, that's your problem.
+
+To find suitable triggers for a target, use the `/snipe` command instead.
+
+Triggers can be viewed by anyone with the `@Setup Role` at any time by running the `/triggers` command.
+
 ## Contact
 
 If you have any questions about this tool, contact me using one of the following:
+
 NationStates telegrams: https://nationstates.net/nation=merethin
+
 Discord: @ns_merethin
 
 ## Disclaimer

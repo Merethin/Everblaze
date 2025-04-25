@@ -1,6 +1,7 @@
 .env
 regions.db
 regions.xml
+bot.db
 __pycache__
 venv
 pidfile

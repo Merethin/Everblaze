@@ -136,7 +136,7 @@ class OutputLog(RichLog):
     @work(thread=True)
     def update_listener(self) -> None:
         url = 'https://www.nationstates.net/api/admin/'
-        headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze by Merethin, used by {nation_name}"}
+        headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (TUI) by Merethin, used by {nation_name}"}
 
         client = util.connect_sse(url, headers)
 
