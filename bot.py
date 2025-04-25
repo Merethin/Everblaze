@@ -114,7 +114,7 @@ def display_trigger(trigger) -> str:
     if "target" not in trigger.keys():
         return f"https://www.nationstates.net/region={trigger["api_name"]} - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
     
-    return f"https://www.nationstates.net/region={trigger["target"]} ({trigger["api_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
+    return f"https://www.nationstates.net/region={trigger["target"]} ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
 
 def display_trigger_simple(trigger) -> str:
     if "target" not in trigger.keys():
