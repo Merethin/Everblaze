@@ -75,6 +75,13 @@ async def check_command_permissions(interaction: discord.Interaction) -> bool:
 def should_be_ephemeral(interaction: discord.Interaction) -> bool:
     return guilds[interaction.guild.id]["invisible"]
 
+def format_time(seconds: int) -> str:
+    minutes = seconds // 60
+    seconds = seconds % 60
+    hours = minutes // 60
+    minutes = minutes % 60
+    return "{:02d}:{:02d}:{:02d}".format(hours, minutes, seconds)
+
 @bot.tree.command(description="Configure the bot.")
 async def config(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, channel: discord.TextChannel, invisible: bool):
     if interaction.user != interaction.guild.owner:
@@ -102,10 +109,18 @@ async def config(interaction: discord.Interaction, setup_role: discord.Role, pin
     await interaction.response.send_message("Server configuration updated!", ephemeral=True)
 
 def display_trigger(trigger) -> str:
+    data = util.fetch_region_data_from_db(everblaze_cursor, trigger["api_name"])
+
     if "target" not in trigger.keys():
-        return trigger["api_name"]
+        return f"https://www.nationstates.net/region={trigger["api_name"]} - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
     
-    return f"{trigger["target"]} ({trigger["api_name"]};{trigger["delay"]}s)"
+    return f"https://www.nationstates.net/region={trigger["target"]} ({trigger["api_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
+
+def display_trigger_simple(trigger) -> str:
+    if "target" not in trigger.keys():
+        return f"Next trigger: https://www.nationstates.net/region={trigger["api_name"]}"
+    
+    return f"Next target: https://www.nationstates.net/region={trigger["target"]}"
 
 def format_update_log(trigger) -> str:
     if "target" not in trigger.keys():
@@ -177,6 +192,19 @@ async def triggers(interaction: discord.Interaction):
 
     list = "\n".join([display_trigger(t) for t in targets.triggers])
     await interaction.response.send_message(list, ephemeral=should_be_ephemeral(interaction))
+
+@bot.tree.command(description="List active triggers.")
+async def next(interaction: discord.Interaction, visible: bool = True):
+    if not await check_command_permissions(interaction):
+        return
+    
+    targets = guilds[interaction.guild.id]["triggers"]
+
+    if(len(targets.triggers) == 0):
+        await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
+        return
+    
+    await interaction.response.send_message(display_trigger_simple(targets.triggers[0]), ephemeral=(should_be_ephemeral(interaction) and not visible))
     
 @bot.tree.command(description="Find a trigger for a selected target.")
 async def snipe(interaction: discord.Interaction, target: str, update: str, ideal_delay: int, early_tolerance: int, late_tolerance: int):
