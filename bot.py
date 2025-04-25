@@ -34,6 +34,7 @@ async def on_ready():
             guilds[guild.id]["setup_role"] = data[1]
             guilds[guild.id]["ping_role"] = data[2]
             guilds[guild.id]["channel"] = data[3]
+            guilds[guild.id]["invisible"] = data[4]
             guilds[guild.id]["triggers"] = util.TriggerList()
             guilds[guild.id]["last_update"] = -1
 
@@ -71,11 +72,17 @@ async def check_command_permissions(interaction: discord.Interaction) -> bool:
 
     return True
 
-@commands.is_owner()
+def should_be_ephemeral(interaction: discord.Interaction) -> bool:
+    return guilds[interaction.guild.id]["invisible"]
+
 @bot.tree.command(description="Configure the bot.")
-async def config(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, channel: discord.TextChannel):
-    data = (interaction.guild.id, setup_role.id, ping_role.id, channel.id)
-    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
+async def config(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, channel: discord.TextChannel, invisible: bool):
+    if interaction.user != interaction.guild.owner:
+        await interaction.response.send_message("Only the server owner can use this command.", ephemeral=True)
+        return
+    
+    data = (interaction.guild.id, setup_role.id, ping_role.id, channel.id, invisible)
+    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?, ?)", data)
     bot_con.commit()
 
     if interaction.guild.id not in guilds.keys():
@@ -84,12 +91,13 @@ async def config(interaction: discord.Interaction, setup_role: discord.Role, pin
     guilds[interaction.guild.id]["setup_role"] = setup_role.id
     guilds[interaction.guild.id]["ping_role"] = ping_role.id
     guilds[interaction.guild.id]["channel"] = channel.id
+    guilds[interaction.guild.id]["invisible"] = invisible
     guilds[interaction.guild.id]["last_update"] = -1
 
     if "triggers" not in guilds[interaction.guild.id].keys():
         guilds[interaction.guild.id]["triggers"] = util.TriggerList()
 
-    print(f"Server configuration updated for guild {interaction.guild.name}: Setup Role {setup_role.name}, Ping Role {ping_role.name}, Channel {channel.name}")
+    print(f"Server configuration updated for guild {interaction.guild.name}: Setup Role {setup_role.name}, Ping Role {ping_role.name}, Channel {channel.name}, Invisible {invisible}")
 
     await interaction.response.send_message("Server configuration updated!", ephemeral=True)
 
@@ -117,7 +125,7 @@ async def add(interaction: discord.Interaction, trigger: str):
     })
     targets.sort_triggers(everblaze_cursor)
 
-    await interaction.response.send_message(f"Added trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=True)
+    await interaction.response.send_message(f"Added trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
 
 @bot.tree.command(description="Add a new target and associated trigger.")
 async def add_target(interaction: discord.Interaction, target: str, trigger: str, delay: int):
@@ -133,7 +141,7 @@ async def add_target(interaction: discord.Interaction, target: str, trigger: str
     })
     targets.sort_triggers(everblaze_cursor)
 
-    await interaction.response.send_message(f"Added target {target} with trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=True)
+    await interaction.response.send_message(f"Added target {target} with trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
 
 @bot.tree.command(description="Reset all triggers and update information.")
 async def reset(interaction: discord.Interaction):
@@ -143,7 +151,7 @@ async def reset(interaction: discord.Interaction):
     guilds[interaction.guild.id]["triggers"].triggers = []
     guilds[interaction.guild.id]["last_update"] = -1
 
-    await interaction.response.send_message(f"Successfully reset all triggers and update information.", ephemeral=True)
+    await interaction.response.send_message(f"Successfully reset all triggers and update information.", ephemeral=should_be_ephemeral(interaction))
     
 @bot.tree.command(description="Remove a trigger.")
 async def remove(interaction: discord.Interaction, trigger: str):
@@ -154,7 +162,7 @@ async def remove(interaction: discord.Interaction, trigger: str):
     
     targets.remove_trigger(util.format_nation_or_region(trigger))
 
-    await interaction.response.send_message(f"Removed trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=True)
+    await interaction.response.send_message(f"Removed trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
 
 @bot.tree.command(description="List active triggers.")
 async def triggers(interaction: discord.Interaction):
@@ -164,11 +172,11 @@ async def triggers(interaction: discord.Interaction):
     targets = guilds[interaction.guild.id]["triggers"]
 
     if(len(targets.triggers) == 0):
-        await interaction.response.send_message(f"No triggers set!", ephemeral=True)
+        await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
         return
 
     list = "\n".join([display_trigger(t) for t in targets.triggers])
-    await interaction.response.send_message(list, ephemeral=True)
+    await interaction.response.send_message(list, ephemeral=should_be_ephemeral(interaction))
     
 @bot.tree.command(description="Find a trigger for a selected target.")
 async def snipe(interaction: discord.Interaction, target: str, update: str, ideal_delay: int, early_tolerance: int, late_tolerance: int):
@@ -179,7 +187,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
 
     region_data = util.fetch_region_data_from_db(everblaze_cursor, util.format_nation_or_region(target))
     if region_data is None:
-        await interaction.response.send_message(f"{target} does not exist!", ephemeral=True)
+        await interaction.response.send_message(f"{target} does not exist!", ephemeral=should_be_ephemeral(interaction))
         return
     
     trigger_time = 0
@@ -190,7 +198,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
 
     trigger = util.find_region_updating_at_time(everblaze_cursor, trigger_time, minor, early_tolerance, late_tolerance)
     if trigger is None:
-        await interaction.response.send_message(f"No trigger for {target} found in the specified time range!", ephemeral=True)
+        await interaction.response.send_message(f"No trigger for {target} found in the specified time range!", ephemeral=should_be_ephemeral(interaction))
         return
 
     delay = 0
@@ -208,7 +216,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
     })
     targets.sort_triggers(everblaze_cursor)
 
-    await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: {delay}s)", ephemeral=True)
+    await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: {delay}s)", ephemeral=should_be_ephemeral(interaction))
 
 class BaseRegionView(discord.ui.View):
     interaction: discord.Interaction | None = None
@@ -233,7 +241,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
     if not await check_command_permissions(interaction):
         return
     
-    await interaction.response.send_message(f"Got it! Selecting targets for {update}...", ephemeral=True)
+    await interaction.response.send_message(f"Got it! Selecting targets for {update}...", ephemeral=should_be_ephemeral(interaction))
     
     minor = update == "minor"
 
@@ -288,19 +296,19 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
 
             last_switch_time = update_time
 
-            await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for target {target} (delay: {delay}s)", ephemeral=True)
+            await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for target {target} (delay: {delay}s)", ephemeral=should_be_ephemeral(interaction))
 
             view.stop()
         
         async def skip_callback(interaction: discord.Interaction):
-            await interaction.response.send_message(f"Understood, finding a different target...", ephemeral=True)
+            await interaction.response.send_message(f"Understood, finding a different target...", ephemeral=should_be_ephemeral(interaction))
             view.stop()
 
         async def end_callback(interaction: discord.Interaction):
             nonlocal should_finish
             should_finish = True
 
-            await interaction.response.send_message("Stopped looking for targets.", ephemeral=True)
+            await interaction.response.send_message("Stopped looking for targets.", ephemeral=should_be_ephemeral(interaction))
             view.stop()
 
         # add the callback to the button
@@ -311,14 +319,14 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         view.add_item(skip_button)
         view.add_item(end_button)
 
-        await interaction.followup.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: {delay}s", view=view, ephemeral=True)
+        await interaction.followup.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: {delay}s", view=view, ephemeral=should_be_ephemeral(interaction))
 
         await view.wait()
 
         if should_finish:
             return
 
-    await interaction.followup.send(f"No more regions found!", ephemeral=True)
+    await interaction.followup.send(f"No more regions found!", ephemeral=should_be_ephemeral(interaction))
 
 @bot.event
 async def on_region_update(region: str):
@@ -392,7 +400,7 @@ def main():
 
     if table_list == []:
         # Guild list doesn't exist, create it
-        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id, ping_role_id, channel_id)")
+        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id, ping_role_id, channel_id, invisible)")
         bot_cursor.execute("CREATE UNIQUE INDEX idx_guild_id ON guilds (guild_id);")
         bot_con.commit()
 
