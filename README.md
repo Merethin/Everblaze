@@ -143,7 +143,8 @@ The discord bot can be found in `bot.py`. To self-host it yourself (alternativel
 
 Create a file called `.env` and paste the token like this:
 ```
-TOKEN = "<TOKEN>"```
+TOKEN = "<TOKEN>"
+```
 
 Still on the "Bot" tab, enable "Message Content Intent".
 
