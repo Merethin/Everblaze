@@ -60,7 +60,8 @@ def main():
     parser.add_argument("nation", help="The main nation of the player using this script")
     args = parser.parse_args()
 
-    os.remove("regions.db")
+    if os.path.exists("regions.db"):
+        os.remove("regions.db")
     con = sqlite3.connect("regions.db")
 
     cursor = con.cursor()
