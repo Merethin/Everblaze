@@ -28,6 +28,21 @@ def ensure_api_rate_limit(delay: float):
 def format_nation_or_region(name: str) -> str:
     return name.lower().replace(" ", "_")
 
+# Convert a row from a database query to a dictionary with well-known keys.
+def format_database_data(data) -> typing.Dict:
+    output = {}
+    # Database row layout: (canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password)
+    output["canon_name"] = data[0]
+    output["api_name"] = data[1]
+    output["update_index"] = data[2]
+    output["seconds_major"] = data[3]
+    output["seconds_minor"] = data[4]
+    output["delendos"] = data[5]
+    output["executive"] = data[6]
+    output["password"] = data[7]
+
+    return output
+
 # Fetch data for a region from the local database.
 # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
 def fetch_region_data_from_db(cursor: sqlite3.Cursor, region: str) -> typing.Dict | None:
@@ -37,15 +52,7 @@ def fetch_region_data_from_db(cursor: sqlite3.Cursor, region: str) -> typing.Dic
     if data is None:
         return None
 
-    output = {}
-    # Layout: (canon_name, api_name, update_index, seconds_major, seconds_minor)
-    output["canon_name"] = data[0]
-    output["api_name"] = data[1]
-    output["update_index"] = data[2]
-    output["seconds_major"] = data[3]
-    output["seconds_minor"] = data[4]
-
-    return output
+    return format_database_data(data)
 
 # Find a region updating at the specified delay from the start of update (approximately) in the local database.
 # If minor is set to true, will use minor update times. Otherwise, will use major update times.
@@ -68,19 +75,23 @@ def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: int, minor: bool
                 if time == delay:
                     continue
 
+                # FIXME: optimize this so that the result is the closest it can be to the ideal delay?
                 result = find_region_updating_at_time(cursor, time, minor, 0, 0)
                 if result is not None:
                     return result
                 
         return None
     
-    output = {}
-    # Layout: (canon_name, api_name, update_index, seconds_major, seconds_minor)
-    output["canon_name"] = data[0]
-    output["api_name"] = data[1]
-    output["update_index"] = data[2]
-    output["seconds_major"] = data[3]
-    output["seconds_minor"] = data[4]
+    return format_database_data(data)
+
+# Return a list of all regions that have less endorsements than a point nation and have an executive delegacy.
+def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int) -> typing.List[typing.Dict]:
+    cursor.execute("SELECT * FROM regions WHERE executive = 1 AND password = 0 AND delendos < ?", [point_endos])
+    data = cursor.fetchall()
+
+    output = []
+    for region in data:
+        output.append(format_database_data(region))
 
     return output
 

@@ -35,6 +35,7 @@ async def on_ready():
             guilds[guild.id]["ping_role"] = data[2]
             guilds[guild.id]["channel"] = data[3]
             guilds[guild.id]["triggers"] = util.TriggerList()
+            guilds[guild.id]["last_update"] = -1
 
     try:
         synced = await bot.tree.sync()
@@ -83,6 +84,7 @@ async def config(interaction: discord.Interaction, setup_role: discord.Role, pin
     guilds[interaction.guild.id]["setup_role"] = setup_role.id
     guilds[interaction.guild.id]["ping_role"] = ping_role.id
     guilds[interaction.guild.id]["channel"] = channel.id
+    guilds[interaction.guild.id]["last_update"] = -1
 
     if "triggers" not in guilds[interaction.guild.id].keys():
         guilds[interaction.guild.id]["triggers"] = util.TriggerList()
@@ -132,6 +134,16 @@ async def add_target(interaction: discord.Interaction, target: str, trigger: str
     targets.sort_triggers(everblaze_cursor)
 
     await interaction.response.send_message(f"Added target {target} with trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=True)
+
+@bot.tree.command(description="Reset all triggers and update information.")
+async def reset(interaction: discord.Interaction):
+    if not await check_command_permissions(interaction):
+        return
+    
+    guilds[interaction.guild.id]["triggers"].triggers = []
+    guilds[interaction.guild.id]["last_update"] = -1
+
+    await interaction.response.send_message(f"Successfully reset all triggers and update information.", ephemeral=True)
     
 @bot.tree.command(description="Remove a trigger.")
 async def remove(interaction: discord.Interaction, trigger: str):
@@ -153,6 +165,7 @@ async def triggers(interaction: discord.Interaction):
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=True)
+        return
 
     list = "\n".join([display_trigger(t) for t in targets.triggers])
     await interaction.response.send_message(list, ephemeral=True)
@@ -169,13 +182,13 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
         await interaction.response.send_message(f"{target} does not exist!", ephemeral=True)
         return
     
-    target_time = 0
+    trigger_time = 0
     if minor:
-        target_time = region_data["seconds_minor"] - ideal_delay
+        trigger_time = region_data["seconds_minor"] - ideal_delay
     else:
-        target_time = region_data["seconds_major"] - ideal_delay
+        trigger_time = region_data["seconds_major"] - ideal_delay
 
-    trigger = util.find_region_updating_at_time(everblaze_cursor, target_time, minor, early_tolerance, late_tolerance)
+    trigger = util.find_region_updating_at_time(everblaze_cursor, trigger_time, minor, early_tolerance, late_tolerance)
     if trigger is None:
         await interaction.response.send_message(f"No trigger for {target} found in the specified time range!", ephemeral=True)
         return
@@ -197,6 +210,116 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
 
     await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: {delay}s)", ephemeral=True)
 
+class BaseRegionView(discord.ui.View):
+    interaction: discord.Interaction | None = None
+
+    def __init__(self, user: discord.User | discord.Member, timeout: float = 60.0):
+        super().__init__(timeout=timeout)
+        # We set the user who invoked the command as the user who can interact with the view
+        self.user = user
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "You cannot interact with this view.", ephemeral=True
+            )
+            return False
+        # update the interaction attribute when a valid interaction is received
+        self.interaction = interaction
+        return True
+
+@bot.tree.command(description="Find and select targets with no password and an executive delegate.")
+async def select(interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int):
+    if not await check_command_permissions(interaction):
+        return
+    
+    await interaction.response.send_message(f"Got it! Selecting targets for {update}...", ephemeral=True)
+    
+    minor = update == "minor"
+
+    raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos)
+
+    last_switch_time = -999
+
+    for region in raidable_regions:
+        if(region["update_index"] <= guilds[interaction.guild.id]["last_update"]):
+            continue
+
+        update_time = 0
+        if minor:
+            update_time = region["seconds_minor"]
+        else:
+            update_time = region["seconds_major"]
+
+        if (update_time - last_switch_time) < min_switch_time:
+            continue
+
+        target = region["api_name"]
+        trigger_time = update_time - ideal_delay
+
+        trigger = util.find_region_updating_at_time(everblaze_cursor, trigger_time, minor, early_tolerance, late_tolerance)
+        if trigger is None:
+            continue
+
+        delay = 0
+        if minor:
+            delay = region["seconds_minor"] - trigger["seconds_minor"]
+        else:
+            delay = region["seconds_major"] - trigger["seconds_major"]
+
+        view = BaseRegionView(interaction.user)
+        accept_button = discord.ui.Button(label="Accept Target", style=discord.ButtonStyle.green)
+        skip_button = discord.ui.Button(label="Find Another", style=discord.ButtonStyle.red)
+        end_button = discord.ui.Button(label="Finish", style=discord.ButtonStyle.gray)
+
+        targets = guilds[interaction.guild.id]["triggers"]
+        should_finish = False
+
+        # create a callback for the button
+        async def accept_callback(interaction: discord.Interaction):
+            nonlocal last_switch_time
+
+            targets.add_trigger({
+                "api_name": trigger["api_name"],
+                "target": target,
+                "delay": delay,
+            })
+            targets.sort_triggers(everblaze_cursor)
+
+            last_switch_time = update_time
+
+            await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for target {target} (delay: {delay}s)", ephemeral=True)
+
+            view.stop()
+        
+        async def skip_callback(interaction: discord.Interaction):
+            await interaction.response.send_message(f"Understood, finding a different target...", ephemeral=True)
+            view.stop()
+
+        async def end_callback(interaction: discord.Interaction):
+            nonlocal should_finish
+            should_finish = True
+
+            await interaction.response.send_message("Stopped looking for targets.", ephemeral=True)
+            view.stop()
+
+        # add the callback to the button
+        accept_button.callback = accept_callback
+        skip_button.callback = skip_callback
+        end_button.callback = end_callback
+        view.add_item(accept_button)
+        view.add_item(skip_button)
+        view.add_item(end_button)
+
+        await interaction.followup.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: {delay}s", view=view, ephemeral=True)
+
+        await view.wait()
+
+        if should_finish:
+            return
+
+    await interaction.followup.send(f"No more regions found!", ephemeral=True)
+
 @bot.event
 async def on_region_update(region: str):
     data = util.fetch_region_data_from_db(everblaze_cursor, region)
@@ -204,14 +327,16 @@ async def on_region_update(region: str):
     if data is None:
         return None
     
-    for id, guild in guilds.items():
+    for id, server in guilds.items():
         guild = bot.get_guild(id)
 
-        targets = guild["triggers"]
+        server["last_update"] = data["update_index"]
+
+        targets = server["triggers"]
 
         already_updated = targets.remove_all_updated_triggers(data["update_index"])
-        channel = guild.get_channel(guild["channel"])
-        role = guild.get_role(guild["ping_role"])
+        channel = guild.get_channel(server["channel"])
+        role = guild.get_role(server["ping_role"])
 
         for r in already_updated:
             channel.send(f"{r["api_name"]} has already updated!")
