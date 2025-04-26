@@ -1,7 +1,6 @@
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, threading, json, asyncio
-from discord import app_commands
-from discord.ext import commands, tasks
+import discord, sqlite3, argparse, json, asyncio
+from discord.ext import commands
 import utility as util
 
 # Global variables.
@@ -43,8 +42,6 @@ async def on_ready():
         print(f"Synced {len(synced)} slash commands")
     except Exception as e:
         print(f"Error syncing commands: {e}")
-        
-    print(f"Everblaze has the following guild data: {guilds}")
 
     url = 'https://www.nationstates.net/api/admin/'
     headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (Discord bot) by Merethin, used by {nation_name}"}
@@ -193,7 +190,7 @@ async def triggers(interaction: discord.Interaction):
     list = "\n".join([display_trigger(t) for t in targets.triggers])
     await interaction.response.send_message(list, ephemeral=should_be_ephemeral(interaction))
 
-@bot.tree.command(description="List active triggers.")
+@bot.tree.command(description="Display the next region to update.")
 async def next(interaction: discord.Interaction, visible: bool = True):
     if not await check_command_permissions(interaction):
         return
