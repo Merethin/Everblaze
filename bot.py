@@ -1,5 +1,5 @@
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, json, asyncio
+import discord, sqlite3, argparse, json, asyncio, typing
 from discord.ext import commands
 import utility as util
 
@@ -73,6 +73,9 @@ async def check_command_permissions(interaction: discord.Interaction) -> bool:
 def should_be_ephemeral(interaction: discord.Interaction) -> bool:
     return guilds[interaction.guild.id]["invisible"]
 
+def get_trigger_list(server: typing.Dict) -> util.TriggerList:
+    return server["triggers"]
+
 def format_time(seconds: int) -> str:
     minutes = seconds // 60
     seconds = seconds % 60
@@ -131,7 +134,7 @@ async def add(interaction: discord.Interaction, trigger: str):
     if not await check_command_permissions(interaction):
         return
     
-    targets = guilds[interaction.guild.id]["triggers"]
+    targets = get_trigger_list(guilds[interaction.guild.id])
     
     targets.add_trigger({
         "api_name": util.format_nation_or_region(trigger)
@@ -145,7 +148,7 @@ async def add_target(interaction: discord.Interaction, target: str, trigger: str
     if not await check_command_permissions(interaction):
         return
     
-    targets = guilds[interaction.guild.id]["triggers"]
+    targets = get_trigger_list(guilds[interaction.guild.id])
     
     targets.add_trigger({
         "api_name": util.format_nation_or_region(trigger),
@@ -161,7 +164,7 @@ async def reset(interaction: discord.Interaction):
     if not await check_command_permissions(interaction):
         return
     
-    guilds[interaction.guild.id]["triggers"].triggers = []
+    get_trigger_list(guilds[interaction.guild.id]).triggers = []
     guilds[interaction.guild.id]["last_update"] = -1
 
     await interaction.response.send_message(f"Successfully reset all triggers and update information.", ephemeral=should_be_ephemeral(interaction))
@@ -171,7 +174,7 @@ async def remove(interaction: discord.Interaction, trigger: str):
     if not await check_command_permissions(interaction):
         return
     
-    targets = guilds[interaction.guild.id]["triggers"]
+    targets = get_trigger_list(guilds[interaction.guild.id])
     
     targets.remove_trigger(util.format_nation_or_region(trigger))
 
@@ -182,7 +185,7 @@ async def triggers(interaction: discord.Interaction):
     if not await check_command_permissions(interaction):
         return
     
-    targets = guilds[interaction.guild.id]["triggers"]
+    targets = get_trigger_list(guilds[interaction.guild.id])
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
@@ -196,7 +199,7 @@ async def next(interaction: discord.Interaction, visible: bool = True):
     if not await check_command_permissions(interaction):
         return
     
-    targets = guilds[interaction.guild.id]["triggers"]
+    targets = get_trigger_list(guilds[interaction.guild.id])
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
@@ -233,7 +236,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
     else:
         delay = region_data["seconds_major"] - trigger["seconds_major"]
 
-    targets = guilds[interaction.guild.id]["triggers"]
+    targets = get_trigger_list(guilds[interaction.guild.id])
 
     targets.add_trigger({
         "target": util.format_nation_or_region(target),
@@ -306,7 +309,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         skip_button = discord.ui.Button(label="Find Another", style=discord.ButtonStyle.red)
         end_button = discord.ui.Button(label="Finish", style=discord.ButtonStyle.gray)
 
-        targets = guilds[interaction.guild.id]["triggers"]
+        targets = get_trigger_list(guilds[interaction.guild.id])
         should_finish = False
 
         # create a callback for the button
@@ -366,7 +369,7 @@ async def on_region_update(region: str):
 
         server["last_update"] = data["update_index"]
 
-        targets = server["triggers"]
+        targets = get_trigger_list(server)
 
         already_updated = targets.remove_all_updated_triggers(data["update_index"])
         channel = guild.get_channel(server["channel"])
@@ -379,7 +382,7 @@ async def on_region_update(region: str):
 
         if target is not None:
             await channel.send(f"{role.mention} {format_update_log(target)}")
-            targets.remove_trigger(target)
+            targets.remove_trigger(target["api_name"])
 
 def sse_listener(client) -> None:
     for event in client:
