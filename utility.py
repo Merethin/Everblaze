@@ -54,6 +54,17 @@ def fetch_region_data_from_db(cursor: sqlite3.Cursor, region: str) -> typing.Dic
 
     return format_database_data(data)
 
+# Fetch data for a region from the local database, using its update index.
+# The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
+def fetch_region_data_with_index(cursor: sqlite3.Cursor, index: int) -> typing.Dict | None:
+    cursor.execute("SELECT * FROM regions WHERE update_index = ?", [index])
+    data = cursor.fetchone()
+
+    if data is None:
+        return None
+
+    return format_database_data(data)
+
 # Find a region updating at the specified delay from the start of update (approximately) in the local database.
 # If minor is set to true, will use minor update times. Otherwise, will use major update times.
 # If early_tolerance is nonzero, it is the number of seconds before <delay> that a region is permitted to update at in order to be returned, if there is no exact match.

@@ -212,7 +212,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
     if not await check_command_permissions(interaction):
         return
     
-    minor = update == "minor"
+    minor = update.lower() == "minor"
 
     region_data = util.fetch_region_data_from_db(everblaze_cursor, util.format_nation_or_region(target))
     if region_data is None:
@@ -272,11 +272,19 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
     
     await interaction.response.send_message(f"Got it! Selecting targets for {update}...", ephemeral=should_be_ephemeral(interaction))
     
-    minor = update == "minor"
+    minor = update.lower() == "minor"
 
     raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos)
 
     last_switch_time = -999
+
+    if guilds[interaction.guild.id]["last_update"] >= 0:
+        last_update = util.fetch_region_data_with_index(everblaze_cursor, guilds[interaction.guild.id]["last_update"])
+        if last_update is not None:
+            if minor:
+                last_switch_time = last_update["seconds_minor"]
+            else:
+                last_switch_time = last_update["seconds_major"]
 
     for region in raidable_regions:
         if(region["update_index"] <= guilds[interaction.guild.id]["last_update"]):
