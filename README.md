@@ -13,6 +13,8 @@ Features:
 - Using SSE, it has a lower overhead than tools that poll the API, and can do a lot more than traditional tools.
 - Minimal API calls - Everblaze relies only on the daily data dumps and server-sent events.
 
+**Everblaze runs on Python 3.13. I have not tested earlier Python versions for compatibility. If things don't work, you may have to upgrade your Python version/install a new one.**
+
 ## Screenshots
 
 ### TUI version
