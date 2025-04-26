@@ -373,12 +373,12 @@ async def on_region_update(region: str):
         role = guild.get_role(server["ping_role"])
 
         for r in already_updated:
-            channel.send(f"{r["api_name"]} has already updated!")
+            await channel.send(f"{r["api_name"]} has already updated!")
 
         target = targets.query_trigger(region)
 
         if target is not None:
-            channel.send(f"{role.mention} {format_update_log(target["api_name"])}")
+            await channel.send(f"{role.mention} {format_update_log(target)}")
             targets.remove_trigger(target)
 
 def sse_listener(client) -> None:
