@@ -2,6 +2,7 @@ from dotenv import dotenv_values
 import discord, sqlite3, argparse, json, asyncio, typing
 from discord.ext import commands
 import utility as util
+from pagination import Pagination
 
 # Global variables.
 guilds = {} # All discord servers the bot is in, with their own specific configuration and trigger lists.
@@ -189,6 +190,23 @@ async def triggers(interaction: discord.Interaction):
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
+        return
+
+    ELEMENTS_PER_PAGE = 10
+
+    if(len(targets.triggers) > ELEMENTS_PER_PAGE):
+        local_targets = targets.triggers[:] # Local copy in case the original one is modified while the user is scrolling
+
+        async def get_page(page: int):
+            emb = discord.Embed(title="Trigger List", description="")
+            offset = (page-1) * ELEMENTS_PER_PAGE
+            for region in local_targets[offset:offset+ELEMENTS_PER_PAGE]:
+                emb.description += f"{display_trigger(region)}\n"
+            n = Pagination.compute_total_pages(len(local_targets), ELEMENTS_PER_PAGE)
+            emb.set_footer(text=f"Page {page} of {n}")
+            return emb, n
+
+        await Pagination(interaction, get_page).navigate()
         return
 
     list = "\n".join([display_trigger(t) for t in targets.triggers])
