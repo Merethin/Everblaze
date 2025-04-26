@@ -381,8 +381,8 @@ async def on_region_update(region: str):
         target = targets.query_trigger(region)
 
         if target is not None:
-            await channel.send(f"{role.mention} {format_update_log(target)}")
             targets.remove_trigger(target["api_name"])
+            await channel.send(f"{role.mention} {format_update_log(target)}")
 
 def sse_listener(client) -> None:
     for event in client:
