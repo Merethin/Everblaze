@@ -16,6 +16,7 @@ settings = dotenv_values(".env")
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(command_prefix='%', intents=intents)
 
@@ -81,7 +82,7 @@ def format_time(seconds: int) -> str:
 
 @bot.tree.command(description="Configure the bot.")
 async def config(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, channel: discord.TextChannel, invisible: bool):
-    if interaction.user != interaction.guild.owner:
+    if interaction.user.id != interaction.guild.owner.id:
         await interaction.response.send_message("Only the server owner can use this command.", ephemeral=True)
         return
     

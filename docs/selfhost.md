@@ -7,14 +7,14 @@ Create a file called `.env` and paste the token like this:
 TOKEN = "<TOKEN>"
 ```
 
-Still on the "Bot" tab, enable "Message Content Intent".
+Still on the "Bot" tab, enable "Message Content Intent" and "Server Members Intent".
 
 To invite the bot to a server, go to the "Installation" tab, copy the discord provided Install Link, and go to the Oauth2 tab.
 
 Paste the install link into "Redirects" and configure the permissions in the following way.
 
 "OAuth2 URL Generator":
-Check "messages.read", "bot" and "applications.commands".
+Check "messages.read", "bot", "guilds.members.read" and "applications.commands".
 Select the previously pasted install link in "Select Redirect URL."
 
 "Bot Permissions":
