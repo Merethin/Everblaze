@@ -512,7 +512,7 @@ async def on_region_update(region: str):
         targets = get_trigger_list(server)
         update_region(data, server.channel, server.ping_role, guild, targets)
 
-        for channel in server.channels:
+        for channel in server.channels.values():
             channel_targets = get_trigger_list(channel)
             update_region(data, channel.channel, channel.ping_role, guild, channel_targets)
 
