@@ -166,9 +166,9 @@ class TriggerList:
             
         return None
     
-    # Remove a region from the trigger list, if present.
+    # Remove a region from the trigger list, if present, and return it.
     # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
-    def remove_trigger(self, api_name: str) -> None:
+    def remove_trigger(self, api_name: str) -> typing.Dict:
         value = None
 
         for trigger in self.triggers:
@@ -177,6 +177,8 @@ class TriggerList:
 
         if value is not None:
             self.triggers.remove(value)
+
+        return value
 
     # Remove all regions with a lower update index than provided from the trigger list, and return them.
     def remove_all_updated_triggers(self, update_index: int) -> typing.List[typing.Dict]:
