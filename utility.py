@@ -96,8 +96,8 @@ def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: int, minor: bool
     return format_database_data(data)
 
 # Return a list of all regions that have less endorsements than a point nation and have an executive delegacy.
-def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int) -> typing.List[typing.Dict]:
-    cursor.execute("SELECT * FROM regions WHERE executive = 1 AND password = 0 AND delendos < ?", [point_endos])
+def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int, start: int = -1) -> typing.List[typing.Dict]:
+    cursor.execute("SELECT * FROM regions WHERE executive = 1 AND password = 0 AND delendos < ? AND update_index > ?", [point_endos, start])
     data = cursor.fetchall()
 
     output = []

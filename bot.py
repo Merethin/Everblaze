@@ -1,5 +1,5 @@
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, json, asyncio, typing
+import discord, sqlite3, argparse, json, asyncio, typing, re
 from discord.ext import commands
 import utility as util
 from pagination import Pagination
@@ -65,7 +65,7 @@ async def on_ready():
     except Exception as e:
         print(f"Error syncing commands: {e}")
 
-    url = 'https://www.nationstates.net/api/admin/'
+    url = 'https://www.nationstates.net/api/admin+endo/'
     headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (Discord bot) by Merethin, used by {nation_name}"}
 
     client = util.connect_sse(url, headers)
@@ -74,8 +74,11 @@ async def on_ready():
     print(f"User Agent: '{headers["User-Agent"]}'")
 
     while not is_cancelled:
-        region = await asyncio.to_thread(sse_listener, client)
-        bot.dispatch("region_update", region)
+        (endo, target) = await asyncio.to_thread(sse_listener, client)
+        if endo:
+            bot.dispatch("endo", target)
+        else:
+            bot.dispatch("region_update", target)
 
 async def check_command_permissions(interaction: discord.Interaction) -> bool:
     if interaction.guild.id not in guilds.keys():
@@ -197,9 +200,9 @@ def display_trigger(trigger) -> str:
 
 def display_trigger_simple(trigger) -> str:
     if "target" not in trigger.keys():
-        return f"Next trigger: https://www.nationstates.net/region={trigger["api_name"]}"
+        return f"trigger: https://www.nationstates.net/region={trigger["api_name"]}"
     
-    return f"Next target: https://www.nationstates.net/region={trigger["target"]}"
+    return f"target: https://www.nationstates.net/region={trigger["target"]}"
 
 def format_update_log(trigger) -> str:
     if "target" not in trigger.keys():
@@ -311,7 +314,26 @@ async def next(interaction: discord.Interaction, visible: bool = True):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
         return
     
-    await interaction.response.send_message(display_trigger_simple(targets.triggers[0]), ephemeral=(should_be_ephemeral(interaction) and not visible))
+    await interaction.response.send_message(f"Next {display_trigger_simple(targets.triggers[0])}", ephemeral=(should_be_ephemeral(interaction) and not visible))
+
+@bot.tree.command(description="Skip the next region to update.")
+async def skip(interaction: discord.Interaction):
+    if not await check_command_permissions(interaction):
+        return
+    
+    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+
+    if(len(targets.triggers) == 0):
+        await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
+        return
+    
+    name = targets.triggers[0]["api_name"]
+    trigger = targets.remove_trigger(name)
+
+    if "target" in trigger.keys():
+        guilds[interaction.guild.id].select_targets.discard(trigger["target"])
+    
+    await interaction.response.send_message(f"Removed {display_trigger_simple(trigger)}")
     
 @bot.tree.command(description="Find a trigger for a selected target.")
 async def snipe(interaction: discord.Interaction, target: str, update: str, ideal_delay: int, early_tolerance: int, late_tolerance: int):
@@ -372,7 +394,7 @@ class BaseRegionView(discord.ui.View):
         return True
 
 @bot.tree.command(description="Find and select targets with no password and an executive delegate.")
-async def select(interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int):
+async def select(interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int, confirm: bool = True):
     if not await check_command_permissions(interaction):
         return
     
@@ -380,7 +402,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
     
     minor = update.lower() == "minor"
 
-    raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos)
+    raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos, guilds[interaction.guild.id].last_update)
 
     last_switch_time = -999
 
@@ -421,13 +443,26 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         else:
             delay = region["seconds_major"] - trigger["seconds_major"]
 
+        targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+        should_finish = False
+
+        if not confirm:
+            targets.add_trigger({
+                "api_name": trigger["api_name"],
+                "target": target,
+                "delay": delay,
+            })
+            targets.sort_triggers(everblaze_cursor)
+
+            guilds[interaction.guild.id].select_targets.add(target)
+
+            last_switch_time = update_time
+            continue
+
         view = BaseRegionView(interaction.user)
         accept_button = discord.ui.Button(label="Accept Target", style=discord.ButtonStyle.green)
         skip_button = discord.ui.Button(label="Find Another", style=discord.ButtonStyle.red)
         end_button = discord.ui.Button(label="Finish", style=discord.ButtonStyle.gray)
-
-        targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
-        should_finish = False
 
         # create a callback for the button
         async def accept_callback(interaction: discord.Interaction):
@@ -481,6 +516,137 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
 
     await interaction.followup.send(f"No more regions found!", ephemeral=should_be_ephemeral(interaction))
 
+@bot.tree.command(description="Start a tag run session.")
+async def tag(interaction: discord.Interaction, update: str, point_endos: int, switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int):
+    if not await check_command_permissions(interaction):
+        return
+    
+    await interaction.response.send_message(f"Started tag run for {update}. Please post the point and start endorsing.")
+
+    minor = update.lower() == "minor"
+
+    nation = ""
+
+    while True:
+        op = await bot.wait_for(
+            "message",
+            check=lambda x: x.channel.id == interaction.channel.id
+            and (x.content.lower().startswith("t")
+            or x.content.lower() == "quit"
+            or x.content.lower() == "skip"
+            or x.content.lower().startswith("endos")
+            or x.content.lower().startswith("delay")
+            or x.content.lower().startswith("switch")),
+            timeout=None,
+        )
+
+        last_switch_time = -switch_time
+        endos = 0
+
+        if op.content.lower().startswith("t"):
+            match = re.match(r"t[\s]+http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_ ]+)", op.content.lower())
+            if match is not None:
+                nation = util.format_nation_or_region(match.groups()[0])
+            else:
+                continue
+        elif op.content.lower() == "skip":
+            targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+
+            if(len(targets.triggers) == 0):
+                await interaction.followup.send(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
+                continue
+            
+            name = targets.triggers[0]["api_name"]
+            trigger = targets.remove_trigger(name)
+            
+            endos = point_endos + 1
+        else:
+            if op.content.lower() == "quit":
+                await interaction.followup.send(f"Quitting the tag session.")
+                return
+            elif op.content.lower().startswith("endos"):
+                match = re.match(r"endos[\s]+([0-9]+)", op.content.lower())
+                if match is not None:
+                    point_endos = int(match.groups()[0])
+                    await interaction.followup.send(f"Point endos changed to {point_endos}.")
+            elif op.content.lower().startswith("delay"):
+                match = re.match(r"delay[\s]+([0-9]+);([0-9]+);([0-9]+)", op.content.lower())
+                if match is not None:
+                    ideal_delay = int(match.groups()[0])
+                    early_tolerance = int(match.groups()[1])
+                    late_tolerance = int(match.groups()[2])
+                    await interaction.followup.send(f"Delay changed to {ideal_delay}s, +{early_tolerance}s -{late_tolerance}s")
+            elif op.content.lower().startswith("switch"):
+                match = re.match(r"switch[\s]+([0-9]+)", op.content.lower())
+                if match is not None:
+                    switch_time = int(match.groups()[0])
+                    await interaction.followup.send(f"Switch time changed to {switch_time}.")
+            continue
+
+        if endos < point_endos:
+            await interaction.followup.send(f"Waiting for everyone to endorse {nation} before posting target...")
+        
+        while endos < point_endos:
+            await bot.wait_for(
+                "endo",
+                check=lambda x: x == nation,
+                timeout=None,
+            )
+            endos += 1
+
+        raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos, guilds[interaction.guild.id].last_update)
+
+        if guilds[interaction.guild.id].last_update >= 0:
+            last_update = util.fetch_region_data_with_index(everblaze_cursor, guilds[interaction.guild.id].last_update)
+            if last_update is not None:
+                if minor:
+                    last_switch_time = last_update["seconds_minor"]
+                else:
+                    last_switch_time = last_update["seconds_major"]
+
+        for region in raidable_regions:
+            if(region["update_index"] <= guilds[interaction.guild.id].last_update):
+                continue
+
+            update_time = 0
+            if minor:
+                update_time = region["seconds_minor"]
+            else:
+                update_time = region["seconds_major"]
+
+            if (update_time - last_switch_time) < switch_time:
+                continue
+
+            target = region["api_name"]
+            trigger_time = update_time - ideal_delay
+
+            if target in guilds[interaction.guild.id].select_targets:
+                continue
+
+            trigger = util.find_region_updating_at_time(everblaze_cursor, trigger_time, minor, early_tolerance, late_tolerance)
+            if trigger is None:
+                continue
+
+            delay = 0
+            if minor:
+                delay = region["seconds_minor"] - trigger["seconds_minor"]
+            else:
+                delay = region["seconds_major"] - trigger["seconds_major"]
+
+            targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+
+            targets.add_trigger({
+                "api_name": trigger["api_name"],
+                "target": target,
+                "delay": delay,
+            })
+            targets.sort_triggers(everblaze_cursor)
+
+            guilds[interaction.guild.id].select_targets.add(target)
+
+            await interaction.followup.send(f"Target: https://www.nationstates.net/region={target}")
+            break
+
 def update_region(api_name: str, last_update: int, channel_id: int, ping_role: int, guild: discord.Guild, targets: util.TriggerList):
     already_updated = targets.remove_all_updated_triggers(last_update)
     channel = guild.get_channel(channel_id)
@@ -525,6 +691,8 @@ async def on_region_update(region: str):
     coroutines = [channel.send(message) for (channel, message) in messages]
     await asyncio.gather(*coroutines)
 
+ENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ endorsed @@([a-z0-9_]+)@@")
+
 def sse_listener(client) -> None:
     for event in client:
         # We only notice this after a heartbeat arrives from the connection.
@@ -536,7 +704,7 @@ def sse_listener(client) -> None:
             data = json.loads(event.data)
             happening = data["str"]
 
-            # The happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
+            # The update happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
             # and if so, retrieve the region name.
             match = util.UPDATE_REGEX.match(happening)
             if match is not None:
@@ -544,7 +712,17 @@ def sse_listener(client) -> None:
 
                 print(f"log: {region_name} updated!")
 
-                return region_name
+                return (False, region_name)
+            
+            # The endorsement happening line is formatted like this: "@@endorser@@ endorsed @@endorsed@@" We want to know if the happening matches this, 
+            # and if so, retrieve the endorsed nation's name.
+            match = ENDO_REGEX.match(happening)
+            if match is not None:
+                endorsed = match.groups()[1]
+
+                print(f"log: {endorsed} was endorsed!")
+
+                return (True, endorsed)
 
 def main():
     global everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name

@@ -57,7 +57,7 @@ The delay is **not** checked. Whenever the trigger region updates, Everblaze wil
 
 To find suitable triggers for a target, use the `/snipe` command instead.
 
-```/next (visible)```
+```/next (visible: True)```
 
 Display a link to the next region set to update from the trigger list.
 
@@ -88,18 +88,23 @@ Clear all triggers and reset internal update data.
 
 Currently, Everblaze stores the last region that has updated in order to support things like starting `/select` mid-update. The official bot should restart and clear this stuff after every update, but in case it doesn't, or you're self-hosting it, you may need to run `/reset` to bring the "last region that has updated" back to the beginning of update, before setting up triggers.
 
-```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance>```
+```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance> (confirm: True)```
 
-Arguably the most powerful command in Everblaze. Its functionality is similar to that of QuickDraw, that is, you give it the update to pick triggers for (major or minor), the endorsements you will have on the point, the minimum time to switch between targets, and the desired trigger time, and it will give you unpassworded, executive-delegacy regions to pick from. The targets you pick will automatically be added to the trigger list.
+Arguably one of the most powerful commands in Everblaze. Its functionality is similar to that of QuickDraw, that is, you give it the update to pick triggers for (major or minor), the endorsements you will have on the point, the minimum time to switch between targets, and the desired trigger time, and it will give you unpassworded, executive-delegacy regions to pick from. The targets you pick will automatically be added to the trigger list.
 
 `<update>` must be "major" or "minor". If invalid, defaults to major.
 `<point_endos>` should be the number of endorsements you are expecting to have on the point nation.
 `<min_switch_time>` should be the minimum time, in seconds, that you want to have to switch between one target and another (resigning, joining, endorsing, opening the target page).
 `<ideal_delay>` should be the optimal trigger time in seconds.
-`<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how muchb earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
+`<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
 `<late_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much later can it go? That is, if your ideal delay is 6 seconds, and your late tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 5-second triggers if it can't find one.
+`confirm`: if set to False, Everblaze will not ask you for confirmation to pick triggers, and will instead pick all the regions itself.
 
 When running `/select` correctly, Everblaze will present you with a link to a region. If you want to add that region to your target list, click `Accept Target`. If, for any reason, you don't want to include that region, click `Find Another`. Do this as many times as you want until you have enough, and then click `Finish`. All the triggers and targets you selected will be added to the trigger list.
+
+```/skip```
+
+Remove the next region to update from the trigger list.
 
 ```/snipe <target> <update> <ideal_delay> <early_tolerance> <late_tolerance>```
 
@@ -110,8 +115,31 @@ Given a specific target region, find a trigger that updates a certain amount of 
 All other parameters work the same way as in `/select`:
 `<update>` must be "major" or "minor". If invalid, defaults to major.
 `<ideal_delay>` should be the optimal trigger time in seconds.
-`<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how muchb earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
+`<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
 `<late_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much later can it go? That is, if your ideal delay is 6 seconds, and your late tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 5-second triggers if it can't find one.
+
+```/tag <update> <point_endos> <switch_time> <ideal_delay> <early_tolerance> <late_tolerance>```
+
+Starts a tag raiding session. In this session, Everblaze will repeatedly wait for someone to post a point nation, wait for all participants to endorse it, then dynamically choose a target according to the parameters above, and then send a ping when the trigger updates, until asked to quit.
+
+Parameters:
+`<update>` must be "major" or "minor". If invalid, defaults to major.
+
+The following are parameters, but can also be changed mid-session.
+`<point_endos>` should be the number of endorsements you are expecting to have on the point nation. This is used both to find targets and to know when all participants have endorsed the point and a target can be posted.
+`<switch_time>` should be the minimum time, in seconds, that you want to have between the target being chosen and the trigger updating.
+`<ideal_delay>` should be the optimal trigger time in seconds.
+`<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
+`<late_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much later can it go? That is, if your ideal delay is 6 seconds, and your late tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 5-second triggers if it can't find one.
+
+Commands (messages sent during a session):
+
+`t https://www.nationstates.net/nation=NATION_NAME`: Sets NATION_NAME as point, waits for all participants to endorse it, and then posts a target.
+`quit`: Quits the current tag raiding session.
+`skip`: Skips the provided target and finds a new one.
+`endos ENDOS`: Sets the number of endorsements expected on the point to ENDOS endorsements.
+`switch SWITCH`: Sets the minimum switch time to SWITCH seconds.
+`delay IDEAL;EARLY;LATE`: Sets the optimal trigger time to IDEAL seconds, the early tolerance to EARLY seconds, and the late tolerance to LATE seconds.
 
 ```/triggers```
 
