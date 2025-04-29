@@ -169,7 +169,7 @@ async def remch(interaction: discord.Interaction):
         await interaction.response.send_message("Can't configure this channel because it is already the server's primary channel. Please tell the server owner to change this by running /config.", ephemeral=True)
         return
     
-    if interaction.channel.id not in guilds.channels.keys():
+    if interaction.channel.id not in guilds[interaction.guild.id].channels.keys():
         await interaction.response.send_message("This channel has no channel-specific configuration to remove!", ephemeral=True)
         return
     
@@ -405,11 +405,11 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         if (update_time - last_switch_time) < min_switch_time:
             continue
 
-        if region["api_name"] in guilds[interaction.guild.id].select_targets:
-            continue
-
         target = region["api_name"]
         trigger_time = update_time - ideal_delay
+
+        if target in guilds[interaction.guild.id].select_targets:
+            continue
 
         trigger = util.find_region_updating_at_time(everblaze_cursor, trigger_time, minor, early_tolerance, late_tolerance)
         if trigger is None:
@@ -481,21 +481,25 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
 
     await interaction.followup.send(f"No more regions found!", ephemeral=should_be_ephemeral(interaction))
 
-async def update_region(data: typing.Dict, channel_id: int, ping_role: int, guild: discord.Guild, targets: util.TriggerList):
-    already_updated = targets.remove_all_updated_triggers(data["update_index"])
+def update_region(api_name: str, last_update: int, channel_id: int, ping_role: int, guild: discord.Guild, targets: util.TriggerList):
+    already_updated = targets.remove_all_updated_triggers(last_update)
     channel = guild.get_channel(channel_id)
     role = guild.get_role(ping_role)
 
-    for r in already_updated:
-        await channel.send(f"{r["api_name"]} has already updated!")
+    messages = []
 
-    target = targets.query_trigger(data["api_name"])
+    for r in already_updated:
+        messages.append((channel, f"{r["api_name"]} has already updated!"))
+
+    target = targets.query_trigger(api_name)
 
     if target is not None:
-        targets.remove_trigger(target["api_name"])
+        targets.remove_trigger(api_name)
         if "target" in target.keys():
             guilds[guild.id].select_targets.discard(target["target"])
-        await channel.send(f"{role.mention} {format_update_log(target)}")
+        messages.append((channel, f"{role.mention} {format_update_log(target)}"))
+
+    return messages
 
 @bot.event
 async def on_region_update(region: str):
@@ -504,17 +508,22 @@ async def on_region_update(region: str):
     if data is None:
         return None
     
+    messages = []
+    
     for id, server in guilds.items():
         guild = bot.get_guild(id)
 
         server.last_update = data["update_index"]
 
         targets = get_trigger_list(server)
-        update_region(data, server.channel, server.ping_role, guild, targets)
+        messages += update_region(region, server.last_update, server.channel, server.ping_role, guild, targets)
 
         for channel in server.channels.values():
             channel_targets = get_trigger_list(channel)
-            update_region(data, channel.channel, channel.ping_role, guild, channel_targets)
+            messages += update_region(region, server.last_update, channel.channel, channel.ping_role, guild, channel_targets)
+
+    coroutines = [channel.send(message) for (channel, message) in messages]
+    await asyncio.gather(*coroutines)
 
 def sse_listener(client) -> None:
     for event in client:
