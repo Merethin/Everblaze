@@ -248,7 +248,7 @@ async def reset(interaction: discord.Interaction):
     for channel in guilds[interaction.guild.id].channels.values():
         channel.triggers = []
 
-    guilds[interaction.guild.id]["last_update"] = -1
+    guilds[interaction.guild.id].last_update = -1
 
     await interaction.response.send_message(f"Successfully reset all triggers (including channel-specific ones) and update information.", ephemeral=should_be_ephemeral(interaction))
     
