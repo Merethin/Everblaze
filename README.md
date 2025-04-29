@@ -8,6 +8,7 @@ Features:
 - Fully interactive; triggers can be removed, added, found, etc. at runtime, mid-update.
 - Triggers can be loaded from a file (TUI version only), or can all be added at runtime.
 - Can find any number of raidable/taggable regions for you automatically (Discord version only, similar to QuickDraw).
+- Can be used in separate channels with their own unique trigger lists, and the raidable region finder will only pick regions that have not been picked in any other channel (Discord version only).
 - Can find a suitable trigger for any given region at runtime (both versions).
 - Supports setting both standalone trigger regions and targets with associated triggers.
 - Using SSE, it has a lower overhead than tools that poll the API, and can do a lot more than traditional tools.

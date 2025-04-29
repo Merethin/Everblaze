@@ -169,6 +169,10 @@ async def remch(interaction: discord.Interaction):
         await interaction.response.send_message("Can't configure this channel because it is already the server's primary channel. Please tell the server owner to change this by running /config.", ephemeral=True)
         return
     
+    if interaction.channel.id not in guilds.channels.keys():
+        await interaction.response.send_message("This channel has no channel-specific configuration to remove!", ephemeral=True)
+        return
+    
     bot_cursor.execute("DELETE FROM channels WHERE guild_id = ? AND channel_id = ?", [interaction.guild.id, interaction.channel.id])
     bot_con.commit()
 

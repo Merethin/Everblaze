@@ -24,6 +24,21 @@ Add a region to the trigger list.
 
 A message/ping will be sent when the region updates. If you want a message to be sent at a delay before the region updates, you're looking for `/snipe` instead.
 
+```/addch <ping_role> <invisible>```
+
+Add or edit channel-specific configuration to a channel.
+
+When a channel has channel-specific configuration, it will have its own trigger list, and commands run in that channel will edit that channel's trigger list, instead of the server's global trigger list.
+
+When triggers in the channel-specific trigger list update, `<ping_role>` will be pinged in this channel, instead of the `@Ping Role` specified in `/config`, and instead of the `#channel` specified in `/config`.
+
+Running `/select` in this channel will skip over targets set in other channels (**only** those that have also been set with `/select`, not ones added manually via `/snipe` or `/add_target`), and running `/select` in other channels will skip over targets set in this channel (with the same caveat).
+
+`invisible`: If True, replies from Everblaze in this channel should only be visible to the person who ran the command, or if False, they will be visible to everyone in the channel.
+
+```/remch```
+
+Removes channel-specific configuration and trigger lists and makes all Everblaze commands run in this channel affect the server-wide trigger list instead.
 
 ```/add_target <target> <trigger> <delay>```
 
