@@ -4,17 +4,9 @@ Follow [this link](selfhost.md) to find out how to self-host the Everblaze bot. 
 
 When added to any server, the server owner must run the following command first, in any channel:
 
-```/config @Setup Role @Ping Role #channel invisible```
+```/config @Setup Role```
 
-`@Setup Role`: everyone who has this role will be able to add, remove, and view triggers in this server.
-
-`@Ping Role`: everyone who has this role will be pinged when a trigger updates.
-
-`#channel`: When a trigger updates, a message notifying everyone who has `@Ping Role` will be sent in this channel.
-
-`invisible`: If True, replies from Everblaze should only be visible to the person who ran the command, or if False, they will be visible to everyone in the channel where the command was ran.
-
-If replies are visible, anyone in the channel where Everblaze commands are used (doesn't have to be the same as `#channel` above) will be able to see which triggers you set (which may compromise some operations ahead of time). Consider setting the `invisible` parameter based on your particular server's situation and where you plan to run Everblaze commands - you can always change it later by re-running `/config`.
+`@Setup Role`: everyone who has this role will be able to configure specific channels.
 
 ## Command reference
 
@@ -24,17 +16,17 @@ Add a region to the trigger list.
 
 A message/ping will be sent when the region updates. If you want a message to be sent at a delay before the region updates, you're looking for `/snipe` instead.
 
-```/addch <ping_role> <invisible>```
+```/addch <setup_role> <ping_role> <invisible>```
 
-Add or edit channel-specific configuration to a channel.
+Add or edit channel-specific configuration to a channel (requires the global `@Setup Role` set in `/config`).
 
-When a channel has channel-specific configuration, it will have its own trigger list, and commands run in that channel will edit that channel's trigger list, instead of the server's global trigger list.
+When a channel has channel-specific configuration, it will have its own trigger list, and commands run in that channel will edit that channel's trigger list. Members will need to have `<setup_role>` in order to edit and view this channel's trigger list, as well as start tag sessions.
 
-When triggers in the channel-specific trigger list update, `<ping_role>` will be pinged in this channel, instead of the `@Ping Role` specified in `/config`, and instead of the `#channel` specified in `/config`.
+When triggers in the channel-specific trigger list update, `<ping_role>` will be pinged in this channel.
 
 Running `/select` in this channel will skip over targets set in other channels (**only** those that have also been set with `/select`, not ones added manually via `/snipe` or `/add_target`), and running `/select` in other channels will skip over targets set in this channel (with the same caveat).
 
-`invisible`: If True, replies from Everblaze in this channel should only be visible to the person who ran the command, or if False, they will be visible to everyone in the channel.
+`invisible`: If True, replies from Everblaze in this channel should only be visible to the person who ran the command, or if False, they will be visible to everyone in the channel. This does not apply to tag sessions (all their messages are visible).
 
 ```/remch```
 
@@ -159,13 +151,13 @@ Commands (messages sent during a session):
 
 `quit`: Quits the current tag raiding session.
 
-`skip`: Skips the provided target and finds a new one.
+`miss`: Skips the provided target and finds a new one.
 
 `endos ENDOS`: Sets the number of endorsements expected on the point to ENDOS endorsements.
 
 `switch SWITCH`: Sets the minimum switch time to SWITCH seconds.
 
-`delay DELAU`: Sets the optimal trigger time to DELAY seconds.
+`delay DELAY`: Sets the optimal trigger time to DELAY seconds.
 
 ```/triggers```
 
