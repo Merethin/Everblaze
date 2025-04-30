@@ -1,5 +1,10 @@
+# db.py - Region database generation
+# Authored by Merethin, licensed under the BSD-2-Clause license.
+# This file makes 2 (two) API calls (in fetch_passworded_regions() and download_region_data_dump()) 
+# - one to fetch all passworded regions and one to fetch the regional data dump (self-explanatory).
+
 import xml.etree.ElementTree as ET
-import time, calendar, sqlite3, typing, requests, gzip, os, argparse, requests
+import time, calendar, sqlite3, typing, requests, gzip, os
 import utility as util
 
 # Strip the minutes and seconds from a UNIX timestamp.
@@ -10,6 +15,7 @@ def strip_minutes_and_seconds(timestamp: int) -> int:
     tm = time.gmtime(timestamp)
     return calendar.timegm(tm) - (tm.tm_min*60 + tm.tm_sec)
 
+# Fetch a list of all passworded regions from the NationStates API and return it as a list of API-compatible region names.
 def fetch_passworded_regions(nation: str) -> typing.List[str]:
     url = "https://www.nationstates.net/cgi-bin/api.cgi?q=regionsbytag;tags=password"
     headers = {'User-Agent': f"Everblaze by Merethin, used by {nation}"}
@@ -24,6 +30,8 @@ def fetch_passworded_regions(nation: str) -> typing.List[str]:
     root = tree.getroot()
 
     regions = root.find("./REGIONS")
+    assert type(regions) == ET.Element, "Passworded regions API has invalid formatting!"
+    assert regions.text, "Passworded regions API has invalid formatting!"
 
     os.remove("passworded.xml")
 
@@ -60,8 +68,16 @@ def parse_region_data(nation: str, filename: str) -> typing.List[typing.Tuple]:
     regions = root.findall("./REGION")
 
     first_region = regions[0]
-    last_major_start = strip_minutes_and_seconds(int(first_region.find("LASTMAJORUPDATE").text))
-    last_minor_start = strip_minutes_and_seconds(int(first_region.find("LASTMINORUPDATE").text))
+    last_major = first_region.find("LASTMAJORUPDATE")
+    last_minor = first_region.find("LASTMINORUPDATE")
+
+    assert last_major, "Regional data dump has invalid formatting!"
+    assert last_minor, "Regional data dump has invalid formatting!"
+    assert last_major.text, "Regional data dump has invalid formatting!"
+    assert last_minor.text, "Regional data dump has invalid formatting!"
+
+    last_major_start = strip_minutes_and_seconds(int(last_major.text))
+    last_minor_start = strip_minutes_and_seconds(int(last_minor.text))
 
     passworded_regions = fetch_passworded_regions(nation)
 
@@ -81,11 +97,8 @@ def parse_region_data(nation: str, filename: str) -> typing.List[typing.Tuple]:
 
     return region_data
 
-def main():
-    parser = argparse.ArgumentParser(prog="everblaze-db", description="Generate a database for use by Everblaze clients")
-    parser.add_argument("nation", help="The main nation of the player using this script")
-    args = parser.parse_args()
-
+# Generate the region information database, using the provided nation name to identify itself to NationStates.
+def generate_database(nation: str) -> None:
     if os.path.exists("regions.db"):
         os.remove("regions.db")
     con = sqlite3.connect("regions.db")
@@ -93,11 +106,8 @@ def main():
     cursor = con.cursor()
     cursor.execute("CREATE TABLE regions(canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password)")
 
-    download_region_data_dump(args.nation)
-    region_data = parse_region_data(args.nation,"regions.xml")
+    download_region_data_dump(nation)
+    region_data = parse_region_data(nation,"regions.xml")
 
     cursor.executemany("INSERT INTO regions VALUES(?, ?, ?, ?, ?, ?, ?, ?)", region_data)
     con.commit()
-
-if __name__ == "__main__":
-    main()

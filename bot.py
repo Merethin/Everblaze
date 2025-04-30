@@ -1,51 +1,57 @@
+# bot.py - Versatile Discord bot for R/D triggering and tag raiding
+# Authored by Merethin, licensed under the BSD-2-Clause license.
+# The only API calls made by this file are imported from db.py and utility.py, through bootstrap() and check_if_nation_exists().
+
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, json, asyncio, typing, re, time, math
+import discord, sqlite3, argparse, json, asyncio, typing, re, time, math, sys, sseclient, threading
 from discord.ext import commands
 import utility as util
 from pagination import Pagination
 from dataclasses import dataclass
 
+# Stores information about a region update event, specifically the last one that happened.
+# It stores the update index of the region, the UNIX timestamp of when it updated, and the previously predicted minor and major update times for that region.
 @dataclass
 class LastUpdate:
-    index: int
-    time: float
-    minor: int
-    major: int
+    index: int # The index of the region in update.
+    time: float # The UNIX timestamp at which the region updated.
+    minor: int # The predicted timestamp at which the region would update during minor update.
+    major: int # The predicted timestamp at which the region would update during major update.
 
+# Stores settings and triggers for a specific channel in a guild.
 @dataclass
 class TriggerChannel:
-    channel: int
-    ping_role: int
-    invisible: bool
-    triggers: util.TriggerList
+    setup_role: int # Role to add, remove, and view triggers.
+    ping_role: int # Role to ping when triggers update.
+    invisible: bool # Whether configuration messages should be ephemeral.
+    triggers: util.TriggerList # The trigger list for this channel.
+    session: typing.Optional[typing.Awaitable[None]] = None # Currently running tag session, stored as an async coroutine.
 
+# Stores settings, update data and global targets for a guild.
 @dataclass
 class Guild:
-    setup_role: int
-    ping_role: int
-    channel: int
-    invisible: bool
-    triggers: util.TriggerList
-    select_targets: set
-    last_update: LastUpdate | None
-    channels: dict[int, TriggerChannel]
+    setup_role: int # Role to set up trigger settings.
+    mutually_exclusive_targets: set # Targets shared across channels, so that one team doesn't inadvertently interfere with the other.
+    last_update: typing.Optional[LastUpdate] # Last update information.
+    channels: dict[int, TriggerChannel] # Configured channels.
+    ongoing_tags: int = 0 # Ongoing tag sessions.
 
 # Global variables.
 guilds: dict[int, Guild] = {} # All discord servers the bot is in, with their own specific configuration and trigger lists.
-everblaze_cursor: sqlite3.Cursor | None = None # Everblaze region database cursor
-bot_con: sqlite3.Connection | None = None # Connection to the bot database
-bot_cursor: sqlite3.Cursor | None = None # Bot database cursor
+everblaze_cursor: typing.Optional[sqlite3.Cursor] = None # Everblaze region database cursor
+bot_con: typing.Optional[sqlite3.Connection] = None # Connection to the bot database
+bot_cursor: typing.Optional[sqlite3.Cursor] = None # Bot database cursor
 nation_name: str = "" # The main nation of the player using this script
 
-ongoing_tags: int = 0
-
-is_cancelled: bool = False
-
+# Config loaded from .env, in order to access the Discord token.
 settings: dict[str, str | None] = dotenv_values(".env")
 
 intents: discord.Intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+
+# Used to cancel the SSE thread.
+sse_cancel_event = threading.Event()
 
 bot = commands.Bot(command_prefix='%', intents=intents)
 
@@ -54,16 +60,20 @@ async def on_ready():
     global nation_name
     print(f'Everblaze: logged in as {bot.user}')
 
+    assert bot_cursor
+
+    # Load guild data from the database
     for guild in bot.guilds:
         bot_cursor.execute("SELECT * FROM guilds WHERE guild_id = ?", [guild.id])
         data = bot_cursor.fetchone()
 
         if data is not None:
-            guilds[guild.id] = Guild(data[1], data[2], data[3], data[4], util.TriggerList(), set(), None, {})
+            guilds[guild.id] = Guild(data[1], set(), None, {})
 
     bot_cursor.execute("SELECT * FROM channels")
     data = bot_cursor.fetchall()
 
+    # Load channel data from the database
     for channel in data:
         if channel[0] in guilds.keys():
             guilds[channel[0]].channels[channel[1]] = TriggerChannel(channel[1], channel[2], channel[3], util.TriggerList())
@@ -77,43 +87,61 @@ async def on_ready():
     url = 'https://www.nationstates.net/api/admin+endo+member/'
     headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (Discord bot) by Merethin, used by {nation_name}"}
 
+    # Connect to the SSE feed for: update events, endorsement events, and WA resignation events.
     client = util.connect_sse(url, headers)
 
     print(f"Connected to {url}.")
     print(f"User Agent: '{headers["User-Agent"]}'")
 
-    while not is_cancelled:
-        (event, data) = await asyncio.to_thread(sse_listener, client)
+    while True:
+        # Listen to SSE events on loop.
+        response = await asyncio.to_thread(sse_listener, client, sse_cancel_event)
+        if response is None:
+            return
+        (event, data) = response
         bot.dispatch(event, data)
 
+# Check if a command follows the following requirements:
+# 1. The guild it was run in has been configured.
+# 2. The channel it was run in has been configured.
+# 3. The author of the command has the Setup Role for the channel it's being used in.
 async def check_command_permissions(interaction: discord.Interaction) -> bool:
     if interaction.guild.id not in guilds.keys():
         await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
         return False
+    
     guild = guilds[interaction.guild.id]
-    if interaction.user.get_role(guild.setup_role) is None:
+    if interaction.channel.id not in guild.channels.keys():
+        await interaction.response.send_message("This channel is not configured. Tell a person with the appropriate role to run /addch first.", ephemeral=True)
+        return False
+    
+    channel = guild.channels[interaction.channel.id]
+    if interaction.user.get_role(channel.setup_role) is None:
         await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
         return False
 
     return True
 
-def get_guild_or_channel_to_edit(interaction: discord.Interaction) -> Guild | TriggerChannel:
+# Get the channel properties to edit from a command.
+# Assumes check_command_permissions() has been run before,
+# so the channel properties should exist no matter what.
+def get_channel_to_edit(interaction: discord.Interaction) -> TriggerChannel:
     guild = guilds[interaction.guild.id]
 
     if interaction.channel.id in guild.channels.keys():
         return guild.channels[interaction.channel.id]
     
-    return guild
+    typing.assert_never("No channel to edit after running check_command_permissions!")
 
+# Whether a response to a command should be ephemeral, depending on the channel settings.
 def should_be_ephemeral(interaction: discord.Interaction) -> bool:
-    return bool(get_guild_or_channel_to_edit(interaction).invisible)
+    return bool(get_channel_to_edit(interaction).invisible)
 
-def should_be_ephemeral_guild_wide(interaction: discord.Interaction) -> bool:
-    return bool(guilds[interaction.guild.id].invisible)
+# Get the trigger list for a channel.
+def get_trigger_list(channel: TriggerChannel) -> util.TriggerList:
+    return channel.triggers
 
-def get_trigger_list(server: Guild | TriggerChannel) -> util.TriggerList:
-    return server.triggers
-
+# Format a number of seconds as a string "HH:MM:SS"
 def format_time(seconds: int) -> str:
     minutes = seconds // 60
     seconds = seconds % 60
@@ -122,65 +150,66 @@ def format_time(seconds: int) -> str:
     return "{:02d}:{:02d}:{:02d}".format(hours, minutes, seconds)
 
 @bot.tree.command(description="Configure the bot.")
-async def config(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, channel: discord.TextChannel, invisible: bool):
+async def config(interaction: discord.Interaction, setup_role: discord.Role):
     if interaction.user.id != interaction.guild.owner.id:
         await interaction.response.send_message("Only the server owner can use this command.", ephemeral=True)
         return
     
-    data = (interaction.guild.id, setup_role.id, ping_role.id, channel.id, invisible)
-    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?, ?)", data)
+    assert bot_cursor
+    assert bot_con
+    
+    data = (interaction.guild.id, setup_role.id)
+    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?)", data)
     bot_con.commit()
 
     if interaction.guild.id not in guilds.keys():
-        guilds[interaction.guild.id] = Guild(setup_role.id, ping_role.id, channel.id, invisible, util.TriggerList(), set(), None, {})
+        guilds[interaction.guild.id] = Guild(setup_role.id, set(), None, {})
     else:
         guilds[interaction.guild.id].setup_role = setup_role.id
-        guilds[interaction.guild.id].ping_role = ping_role.id
-        guilds[interaction.guild.id].channel = channel.id
-        guilds[interaction.guild.id].invisible = invisible
         guilds[interaction.guild.id].last_update = None
 
-    print(f"Server configuration updated for guild {interaction.guild.name}: Setup Role {setup_role.name}, Ping Role {ping_role.name}, Channel {channel.name}, Invisible {invisible}")
+    print(f"Server configuration updated for guild {interaction.guild.name}: Setup Role {setup_role.name}")
 
     await interaction.response.send_message("Server configuration updated!", ephemeral=True)
 
-@bot.tree.command(description="Add a separate ping role and target list to a channel.")
-async def addch(interaction: discord.Interaction, ping_role: discord.Role, invisible: bool):
-    if not await check_command_permissions(interaction):
+@bot.tree.command(description="Add a separate setup role, ping role and target list to a channel.")
+async def addch(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, invisible: bool):
+    if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
+        await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
         return
     
-    if interaction.channel.id == guilds[interaction.guild.id].channel:
-        await interaction.response.send_message("Can't configure this channel because it is already the server's primary channel. Please tell the server owner to change this by running /config.", ephemeral=True)
-        return
+    assert bot_cursor
+    assert bot_con
     
-    data = (interaction.guild.id, interaction.channel.id, ping_role.id, invisible)
-    bot_cursor.execute("INSERT OR REPLACE INTO channels VALUES (?, ?, ?, ?)", data)
+    data = (interaction.guild.id, interaction.channel.id, setup_role.id, ping_role.id, invisible)
+    bot_cursor.execute("INSERT OR REPLACE INTO channels VALUES (?, ?, ?, ?, ?)", data)
     bot_con.commit()
 
     guild = guilds[interaction.guild.id]
 
     if interaction.channel.id not in guild.channels.keys():
-        guild.channels[interaction.channel.id] = TriggerChannel(interaction.channel.id, ping_role.id, invisible, util.TriggerList())
+        guild.channels[interaction.channel.id] = TriggerChannel(setup_role.id, ping_role.id, invisible, util.TriggerList())
     else:
+        guild.channels[interaction.channel.id].setup_role = setup_role.id
         guild.channels[interaction.channel.id].ping_role = ping_role.id
         guild.channels[interaction.channel.id].invisible = invisible
 
-    print(f"Server configuration updated for guild {interaction.guild.name}, channel {interaction.channel.name}: Ping Role {ping_role.name}, Invisible {invisible}")
+    print(f"Server configuration updated for guild {interaction.guild.name}, channel {interaction.channel.name}: Setup Role {setup_role.name}, Ping Role {ping_role.name}, Invisible {invisible}")
 
-    await interaction.response.send_message("Channel configuration updated!", ephemeral=should_be_ephemeral_guild_wide(interaction))
+    await interaction.response.send_message("Channel configuration updated!", ephemeral=True)
 
 @bot.tree.command(description="Remove the separate ping role and target list from a channel.")
 async def remch(interaction: discord.Interaction):
-    if not await check_command_permissions(interaction):
-        return
-    
-    if interaction.channel.id == guilds[interaction.guild.id].channel:
-        await interaction.response.send_message("Can't configure this channel because it is already the server's primary channel. Please tell the server owner to change this by running /config.", ephemeral=True)
+    if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
+        await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
         return
     
     if interaction.channel.id not in guilds[interaction.guild.id].channels.keys():
         await interaction.response.send_message("This channel has no channel-specific configuration to remove!", ephemeral=True)
         return
+    
+    assert bot_cursor
+    assert bot_con
     
     bot_cursor.execute("DELETE FROM channels WHERE guild_id = ? AND channel_id = ?", [interaction.guild.id, interaction.channel.id])
     bot_con.commit()
@@ -190,27 +219,34 @@ async def remch(interaction: discord.Interaction):
     triggers = get_trigger_list(guild.channels[interaction.channel.id]).triggers
     for trigger in triggers:
         if "target" in trigger.keys():
-            guild.select_targets.discard(trigger["target"])
+            guild.mutually_exclusive_targets.discard(trigger["target"])
 
     del guild.channels[interaction.channel.id]
 
-    await interaction.response.send_message("Channel configuration removed!", ephemeral=should_be_ephemeral_guild_wide(interaction))
+    await interaction.response.send_message("Channel configuration removed!", ephemeral=True)
 
-def display_trigger(trigger) -> str:
+# Format a string with trigger data, including the link, triggers and predicted update times.
+def display_trigger(trigger: typing.Dict) -> str:
+    assert everblaze_cursor
     data = util.fetch_region_data_from_db(everblaze_cursor, trigger["api_name"])
+
+    if data is None:
+        return ""
 
     if "target" not in trigger.keys():
         return f"https://www.nationstates.net/region={trigger["api_name"]} - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
     
     return f"https://www.nationstates.net/region={trigger["target"]} ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
 
-def display_trigger_simple(trigger) -> str:
+# Format a string with a link to a trigger.
+def display_trigger_simple(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
         return f"trigger: https://www.nationstates.net/region={trigger["api_name"]}"
     
     return f"target: https://www.nationstates.net/region={trigger["target"]}"
 
-def format_update_log(trigger) -> str:
+# Format a region update happening given a trigger that has just updated.
+def format_update_log(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
         return f"{trigger["api_name"]} updated!"
     
@@ -221,7 +257,9 @@ async def add(interaction: discord.Interaction, trigger: str):
     if not await check_command_permissions(interaction):
         return
     
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    assert everblaze_cursor
+    
+    targets = get_trigger_list(get_channel_to_edit(interaction))
     
     targets.add_trigger({
         "api_name": util.format_nation_or_region(trigger)
@@ -235,7 +273,9 @@ async def add_target(interaction: discord.Interaction, target: str, trigger: str
     if not await check_command_permissions(interaction):
         return
     
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    assert everblaze_cursor
+    
+    targets = get_trigger_list(get_channel_to_edit(interaction))
     
     targets.add_trigger({
         "api_name": util.format_nation_or_region(trigger),
@@ -251,15 +291,14 @@ async def reset(interaction: discord.Interaction):
     if not await check_command_permissions(interaction):
         return
     
-    if ongoing_tags > 0:
+    if guilds[interaction.guild.id].ongoing_tags > 0:
         await interaction.response.send_message(f"Can't do that, there are tag sessions running. Use /clear instead.", ephemeral=should_be_ephemeral(interaction))
         return
-    
-    get_trigger_list(guilds[interaction.guild.id]).triggers = []
-    guilds[interaction.guild.id].select_targets = set()
+
+    guilds[interaction.guild.id].mutually_exclusive_targets = set()
 
     for channel in guilds[interaction.guild.id].channels.values():
-        channel.triggers = []
+        channel.triggers.triggers = []
 
     guilds[interaction.guild.id].last_update = None
 
@@ -270,13 +309,13 @@ async def clear(interaction: discord.Interaction):
     if not await check_command_permissions(interaction):
         return
     
-    triggers = get_trigger_list(get_guild_or_channel_to_edit(interaction)).triggers
+    triggers = get_trigger_list(get_channel_to_edit(interaction)).triggers
 
     for trigger in triggers:
         if "target" in trigger.keys():
-            guilds[interaction.guild.id].select_targets.discard(trigger["target"])
+            guilds[interaction.guild.id].mutually_exclusive_targets.discard(trigger["target"])
 
-    get_trigger_list(get_guild_or_channel_to_edit(interaction)).triggers = []
+    get_trigger_list(get_channel_to_edit(interaction)).triggers = []
 
     await interaction.response.send_message(f"Successfully reset all triggers in this channel.", ephemeral=should_be_ephemeral(interaction))
     
@@ -285,7 +324,7 @@ async def remove(interaction: discord.Interaction, trigger: str):
     if not await check_command_permissions(interaction):
         return
     
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    targets = get_trigger_list(get_channel_to_edit(interaction))
     
     t = targets.remove_trigger(util.format_nation_or_region(trigger))
     if t is None:
@@ -293,7 +332,7 @@ async def remove(interaction: discord.Interaction, trigger: str):
         return
     
     if "target" in t.keys():
-        guilds[interaction.guild.id].select_targets.discard(t["target"])
+        guilds[interaction.guild.id].mutually_exclusive_targets.discard(t["target"])
 
     await interaction.response.send_message(f"Removed trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
 
@@ -302,7 +341,7 @@ async def triggers(interaction: discord.Interaction):
     if not await check_command_permissions(interaction):
         return
     
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    targets = get_trigger_list(get_channel_to_edit(interaction))
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
@@ -333,7 +372,7 @@ async def next(interaction: discord.Interaction, visible: bool = True):
     if not await check_command_permissions(interaction):
         return
     
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    targets = get_trigger_list(get_channel_to_edit(interaction))
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
@@ -346,7 +385,7 @@ async def skip(interaction: discord.Interaction):
     if not await check_command_permissions(interaction):
         return
     
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    targets = get_trigger_list(get_channel_to_edit(interaction))
 
     if(len(targets.triggers) == 0):
         await interaction.response.send_message(f"No triggers set!", ephemeral=should_be_ephemeral(interaction))
@@ -355,8 +394,10 @@ async def skip(interaction: discord.Interaction):
     name = targets.triggers[0]["api_name"]
     trigger = targets.remove_trigger(name)
 
+    assert trigger # The case where the trigger list is empty is already handled above.
+
     if "target" in trigger.keys():
-        guilds[interaction.guild.id].select_targets.discard(trigger["target"])
+        guilds[interaction.guild.id].mutually_exclusive_targets.discard(trigger["target"])
     
     await interaction.response.send_message(f"Removed {display_trigger_simple(trigger)}")
     
@@ -365,7 +406,9 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
     if not await check_command_permissions(interaction):
         return
     
-    minor = update.lower() == "minor"
+    assert everblaze_cursor
+    
+    minor = util.is_minor(update)
 
     region_data = util.fetch_region_data_from_db(everblaze_cursor, util.format_nation_or_region(target))
     if region_data is None:
@@ -389,7 +432,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
     else:
         delay = region_data["seconds_major"] - trigger["seconds_major"]
 
-    targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+    targets = get_trigger_list(get_channel_to_edit(interaction))
 
     targets.add_trigger({
         "target": util.format_nation_or_region(target),
@@ -424,26 +467,32 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         return
     
     await interaction.response.send_message(f"Got it! Selecting targets for {update}...", ephemeral=should_be_ephemeral(interaction))
+
+    assert everblaze_cursor
     
-    minor = update.lower() == "minor"
+    minor = util.is_minor(update)
+
+    last_update = guilds[interaction.guild.id].last_update
 
     start = -1
-    if guilds[interaction.guild.id].last_update is not None:
-        start = guilds[interaction.guild.id].last_update.index
+    if last_update is not None:
+        start = last_update.index
 
     raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos, start)
 
     last_switch_time = -999
 
-    if guilds[interaction.guild.id].last_update is not None:
+    if last_update is not None:
         if minor:
-            last_switch_time = guilds[interaction.guild.id].last_update.minor
+            last_switch_time = last_update.minor
         else:
-            last_switch_time = guilds[interaction.guild.id].last_update.major
+            last_switch_time = last_update.major
 
     for region in raidable_regions:
-        if guilds[interaction.guild.id].last_update is not None:
-            if(region["update_index"] <= guilds[interaction.guild.id].last_update.index):
+        last_update = guilds[interaction.guild.id].last_update
+
+        if last_update is not None:
+            if(region["update_index"] <= last_update.index):
                 continue
 
         update_time = 0
@@ -458,7 +507,8 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         target = region["api_name"]
         trigger_time = update_time - ideal_delay
 
-        if target in guilds[interaction.guild.id].select_targets:
+        # Skip if selected in a different channel
+        if target in guilds[interaction.guild.id].mutually_exclusive_targets:
             continue
 
         trigger = util.find_region_updating_at_time(everblaze_cursor, trigger_time, minor, early_tolerance, late_tolerance)
@@ -471,7 +521,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         else:
             delay = region["seconds_major"] - trigger["seconds_major"]
 
-        targets = get_trigger_list(get_guild_or_channel_to_edit(interaction))
+        targets = get_trigger_list(get_channel_to_edit(interaction))
         should_finish = False
 
         if not confirm:
@@ -482,7 +532,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
             })
             targets.sort_triggers(everblaze_cursor)
 
-            guilds[interaction.guild.id].select_targets.add(target)
+            guilds[interaction.guild.id].mutually_exclusive_targets.add(target)
 
             last_switch_time = update_time
             continue
@@ -492,11 +542,10 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         skip_button = discord.ui.Button(label="Find Another", style=discord.ButtonStyle.red)
         end_button = discord.ui.Button(label="Finish", style=discord.ButtonStyle.gray)
 
-        # create a callback for the button
         async def accept_callback(interaction: discord.Interaction):
             nonlocal last_switch_time
 
-            if target in guilds[interaction.guild.id].select_targets:
+            if target in guilds[interaction.guild.id].mutually_exclusive_targets:
                 await interaction.response.send_message(f"The target {target} has already been selected in a different channel, finding a new one instead.", ephemeral=should_be_ephemeral(interaction))
                 view.stop()
                 return
@@ -508,7 +557,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
             })
             targets.sort_triggers(everblaze_cursor)
 
-            guilds[interaction.guild.id].select_targets.add(target)
+            guilds[interaction.guild.id].mutually_exclusive_targets.add(target)
 
             last_switch_time = update_time
 
@@ -545,11 +594,20 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
     await interaction.followup.send(f"No more regions found!", ephemeral=should_be_ephemeral(interaction))
 
 @bot.tree.command(description="Start a tag run session.")
-async def tag(interaction: discord.Interaction, update: str, point_endos: int, switch_time: int, min_delay: int):
-    global ongoing_tags
-
+async def tag(interaction: discord.Interaction, update: str, point_endos: int, switch_time: int, min_delay: int) -> None:
     if not await check_command_permissions(interaction):
         return
+    
+    if guilds[interaction.guild.id].channels[interaction.channel.id].session is not None:
+        await interaction.response.send_message(f"There is already a tag session ongoing in this channel!", ephemeral=True)
+        return
+    
+    session = run_tag_session(interaction, update, point_endos, switch_time, min_delay)
+    guilds[interaction.guild.id].channels[interaction.channel.id].session = session
+    await session
+
+async def run_tag_session(interaction: discord.Interaction, update: str, point_endos: int, switch_time: int, min_delay: int) -> None:
+    global ongoing_tags
     
     if guilds[interaction.guild.id].last_update is None:
         await interaction.response.send_message(f"Waiting for {update} to start...")
@@ -561,11 +619,13 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
     else:
         await interaction.response.send_message(f"Started tag run for {update}. Please post the point and start endorsing.")
 
-    minor = update.lower() == "minor"
+    assert everblaze_cursor
+
+    minor = util.is_minor(update)
 
     nation = ""
 
-    ongoing_tags += 1
+    guilds[interaction.guild.id].ongoing_tags += 1
 
     while True:
         op = await bot.wait_for(
@@ -573,7 +633,7 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
             check=lambda x: x.channel.id == interaction.channel.id
             and (x.content.lower().startswith("t")
             or x.content.lower() == "quit"
-            or x.content.lower() == "skip"
+            or x.content.lower() == "miss"
             or x.content.lower().startswith("endos")
             or x.content.lower().startswith("delay")
             or x.content.lower().startswith("switch")),
@@ -583,17 +643,20 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
         endos = 0
 
         if op.content.lower().startswith("t"):
+            # Point provided. Fetch nation name
             match = re.match(r"t[\s]+http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_ ]+)", op.content.lower())
             if match is not None:
                 nation = util.format_nation_or_region(match.groups()[0])
             else:
                 continue
-        elif op.content.lower() == "skip":
+        elif op.content.lower() == "miss":
+            # Don't wait for all nations to endorse the point, it's already endorsed
             endos = point_endos + 1
         else:
             if op.content.lower() == "quit":
                 await interaction.followup.send(f"Quitting the tag session.")
-                ongoing_tags -= 1
+                guilds[interaction.guild.id].ongoing_tags -= 1
+                guilds[interaction.guild.id].channels[interaction.channel.id].session = None
                 return
             elif op.content.lower().startswith("endos"):
                 match = re.match(r"endos[\s]+([0-9]+)", op.content.lower())
@@ -612,11 +675,11 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
                     await interaction.followup.send(f"Switch time changed to {switch_time}s")
             continue
 
-        message = None
+        message: typing.Optional[discord.WebhookMessage] = None
         if endos < point_endos:
             message = await interaction.followup.send(f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
 
-        def match(data):
+        def match(data: typing.Tuple[str, str]) -> bool:
             nonlocal nation
             (_, target) = data
             return target == nation
@@ -629,7 +692,8 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
             )
             if event == "endo":
                 endos += 1
-                await message.edit(content=f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
+                if message is not None:
+                    await message.edit(content=f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
             elif event == "unendo":
                 await interaction.followup.send(f"{nation} has been unendorsed, canceling. Waiting for another command.")
                 break
@@ -637,59 +701,73 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
                 await interaction.followup.send(f"{nation} has resigned from the WA, canceling. Waiting for another command.")
                 break
         else:
-            start = guilds[interaction.guild.id].last_update.index
+            last_update = guilds[interaction.guild.id].last_update
+            assert last_update
+
+            start = last_update.index
 
             raidable_regions = util.find_raidable_regions(everblaze_cursor, point_endos, start)
 
             last_update_time = 0
             if minor:
-                last_update_time = guilds[interaction.guild.id].last_update.minor
+                last_update_time = last_update.minor
             else:
-                last_update_time = guilds[interaction.guild.id].last_update.major
+                last_update_time = last_update.major
 
-            time_since_last_update = time.time() - guilds[interaction.guild.id].last_update.time
+            time_since_last_update = time.time() - last_update.time
             target_update_time = math.ceil(last_update_time + time_since_last_update + switch_time + min_delay)
 
             search_start_time = time.time()
 
             for region in raidable_regions:
-                if(region["update_index"] <= guilds[interaction.guild.id].last_update.index):
+                last_update = guilds[interaction.guild.id].last_update
+                assert last_update
+
+                if(region["update_index"] <= last_update.index):
                     continue
 
-                update_time = 0
+                update_time: int = 0
                 if minor:
                     update_time = region["seconds_minor"]
                 else:
                     update_time = region["seconds_major"]
+
+                # Large region is probably updating. Let's wait until it ends and then find a more reliable trigger/target.
+                while (update_time - target_update_time) > 2 or time_since_last_update > 1.5:
+                    await asyncio.sleep(0.3) # Wait for a bit longer before finding a target.
+
+                    last_update = guilds[interaction.guild.id].last_update
+                    assert last_update
+
+                    if minor:
+                        last_update_time = last_update.minor
+                    else:
+                        last_update_time = last_update.major
+
+                    time_since_last_update = time.time() - last_update.time
+                    target_update_time = math.ceil(last_update_time + time_since_last_update + switch_time + min_delay)
 
                 if update_time < target_update_time:
                     continue
 
                 target = region["api_name"]
 
-                if target in guilds[interaction.guild.id].select_targets:
+                if target in guilds[interaction.guild.id].mutually_exclusive_targets:
                     continue
 
-                guilds[interaction.guild.id].select_targets.add(target)
-
-                print(f"found target region: {target}, sending after switch time's up")
+                guilds[interaction.guild.id].mutually_exclusive_targets.add(target)
 
                 search_time = time.time() - search_start_time
                 remaining_time = switch_time - search_time
 
-                # Account for large gaps in update (caused by big regions updating) by waiting for most of the gap before posting the target.
                 gap_delay = (update_time - target_update_time)
-                if gap_delay > 4:
-                    await interaction.followup.send(f"A large region is updating, the target will take a bit longer (warning: times may be inaccurate).")
-                    remaining_time += (gap_delay - 2)
-                    gap_delay = 2
 
                 if remaining_time > 0:
                     await asyncio.sleep(remaining_time)
 
                 try:
                     embed = discord.Embed()
-                    text = "%" * 350
+                    text = "%" * 400
                     embed.description = f"[{text}](https://fast.nationstates.net/region={target})"
                     embed.set_footer(text=f"Move to target: {target}, estimated delay: {gap_delay + min_delay}s")
                     await interaction.followup.send(embed=embed)
@@ -699,7 +777,8 @@ async def tag(interaction: discord.Interaction, update: str, point_endos: int, s
                 break
             else:
                 await interaction.followup.send(f"No more regions found, update is over! Quitting tag session.")
-                ongoing_tags -= 1
+                guilds[interaction.guild.id].ongoing_tags -= 1
+                guilds[interaction.guild.id].channels[interaction.channel.id].session = None
                 return
 
 def update_region(api_name: str, last_update: LastUpdate, channel_id: int, ping_role: int, guild: discord.Guild, targets: util.TriggerList):
@@ -717,13 +796,17 @@ def update_region(api_name: str, last_update: LastUpdate, channel_id: int, ping_
     if target is not None:
         targets.remove_trigger(api_name)
         if "target" in target.keys():
-            guilds[guild.id].select_targets.discard(target["target"])
+            guilds[guild.id].mutually_exclusive_targets.discard(target["target"])
         messages.append((channel, f"{role.mention} {format_update_log(target)}"))
 
     return messages
 
 @bot.event
-async def on_region_update(region: str):
+async def on_region_update(event: typing.Tuple[str, int]):
+    assert everblaze_cursor
+
+    (region, timestamp) = event
+
     data = util.fetch_region_data_from_db(everblaze_cursor, region)
 
     if data is None:
@@ -734,14 +817,11 @@ async def on_region_update(region: str):
     for id, server in guilds.items():
         guild = bot.get_guild(id)
 
-        server.last_update = LastUpdate(data["update_index"], time.time(), data["seconds_minor"], data["seconds_major"])
+        server.last_update = LastUpdate(data["update_index"], float(timestamp), data["seconds_minor"], data["seconds_major"])
 
-        targets = get_trigger_list(server)
-        messages += update_region(region, server.last_update, server.channel, server.ping_role, guild, targets)
-
-        for channel in server.channels.values():
+        for id, channel in server.channels.items():
             channel_targets = get_trigger_list(channel)
-            messages += update_region(region, server.last_update, channel.channel, channel.ping_role, guild, channel_targets)
+            messages += update_region(region, server.last_update, id, channel.ping_role, guild, channel_targets)
 
     coroutines = [channel.send(message) for (channel, message) in messages]
     await asyncio.gather(*coroutines)
@@ -750,12 +830,12 @@ ENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ endorsed @@([a-z0-9_]+)@@")
 UNENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ withdrew its endorsement from @@([a-z0-9_]+)@@")
 RESIGN_REGEX = re.compile(r"@@([a-z0-9_]+)@@ resigned from the World Assembly")
 
-def sse_listener(client) -> None:
+def sse_listener(client: sseclient.SSEClient, cancel_event: threading.Event) -> typing.Optional[typing.Tuple[str, typing.Tuple[str, int] | typing.Tuple[str, str]]]:
     for event in client:
         # We only notice this after a heartbeat arrives from the connection.
-        if is_cancelled:
+        if cancel_event.is_set():
             print("Cancelled thread, closing connection")
-            return
+            return None
         
         if event.data: # If the event has no data it's a heartbeat. We do want to receive heartbeats however so that we can check for cancellation above.
             data = json.loads(event.data)
@@ -769,7 +849,9 @@ def sse_listener(client) -> None:
 
                 print(f"log: {region_name} updated!")
 
-                return ("region_update", region_name)
+                time = data["time"]
+                assert type(time) == int
+                return ("region_update", (region_name, time))
             
             # The endorsement happening line is formatted like this: "@@endorser@@ endorsed @@endorsed@@" We want to know if the happening matches this, 
             # and if so, retrieve the endorsed nation's name.
@@ -800,8 +882,10 @@ def sse_listener(client) -> None:
                 print(f"log: {target} resigned from the WA!")
 
                 return ("wa", ("resign", target))
+            
+    return None # SSE feed aborted/disconnected for some reason
 
-def main():
+def main() -> None:
     global everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name
     parser = argparse.ArgumentParser(prog="everblaze-bot", description="Everblaze Discord bot for NationStates R/D")
     parser.add_argument("-n", "--nation-name", default="")
@@ -812,6 +896,10 @@ def main():
         nation_name = args.nation_name
     else:
         nation_name = input("Please enter your main nation name: ")
+
+    if not util.check_if_nation_exists(nation_name):
+        print(f"The nation {nation_name} does not exist. Try again.")
+        sys.exit(1)
 
     util.bootstrap(nation_name, args.regenerate_db)
 
@@ -825,7 +913,7 @@ def main():
 
     if table_list == []:
         # Guild list doesn't exist, create it
-        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id, ping_role_id, channel_id, invisible)")
+        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id)")
         bot_cursor.execute("CREATE UNIQUE INDEX idx_guild_id ON guilds (guild_id);")
         bot_con.commit()
 
@@ -833,13 +921,14 @@ def main():
 
     if channel_list == []:
         # Channel list doesn't exist, create it
-        bot_cursor.execute("CREATE TABLE channels(guild_id, channel_id, ping_role_id, invisible)")
+        bot_cursor.execute("CREATE TABLE channels(guild_id, channel_id, setup_role_id, ping_role_id, invisible)")
         bot_cursor.execute("CREATE UNIQUE INDEX idx_channel_id ON channels (channel_id);")
         bot_con.commit()
 
     bot.run(settings["TOKEN"])
 
-    is_cancelled = True
+    print("Closing SSE thread...")
+    sse_cancel_event.set()
 
 if __name__ == "__main__":
     main()

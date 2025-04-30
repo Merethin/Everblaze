@@ -1,21 +1,26 @@
+# tui.py - Interactive terminal triggering tool
+# Authored by Merethin, licensed under the BSD-2-Clause license.
+# The only API calls made by this file are imported from db.py and utility.py, through bootstrap() and check_if_nation_exists().
+
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, Input, RichLog
 from textual import on, work
 from textual.message import Message
 from textual.worker import get_current_worker
-import re, argparse, sqlite3, typing, json
+import re, argparse, sqlite3, typing, json, sys
 import utility as util
 
 # Global variables.
 targets = util.TriggerList() # The list of targets to watch for updates (can be modified at runtime).
-cursor = None # Database cursor
-nation_name = "" # The main nation of the player using this script
+cursor: typing.Optional[sqlite3.Cursor] = None # Database cursor
+nation_name: str = "" # The main nation of the player using this script
 
 # Input field to run commands.
 # Currently, these are the three supported commands:
 #   add region_name - adds a region to the trigger list
 #   remove region_name - manually removes a region from the trigger list, without waiting for it to update
+#   snipe target;update;delay;early_tolerance;late_tolerance - finds a trigger for a specified region
 #   clear - clears the log
 class CommandInput(Input):
     class AddTarget(Message):
@@ -203,6 +208,8 @@ class TriggerList(Static):
         event.stop()
 
 class TriggerApp(App):
+    cursor: typing.Optional[sqlite3.Cursor]
+
     class RegionUpdate(Message):
         """Transmitted when a region has updated."""
 
@@ -230,6 +237,9 @@ class TriggerApp(App):
     @on(CommandInput.AddTarget)
     def on_add_target(self, event: CommandInput.AddTarget) -> None:
         global targets
+
+        assert self.cursor
+
         targets.add_trigger({
             "api_name": event.target
         })
@@ -260,6 +270,8 @@ class TriggerApp(App):
     def on_region_update(self, event: RegionUpdate) -> None:
         global targets
 
+        assert self.cursor
+
         data = util.fetch_region_data_from_db(self.cursor, event.region)
 
         if data is None:
@@ -281,9 +293,15 @@ class TriggerApp(App):
     def on_snipe_target(self, event: CommandInput.SnipeTarget) -> None:
         global targets
 
-        minor = event.update == "minor"
+        assert self.cursor
+
+        minor = util.is_minor(event.update)
 
         region_data = util.fetch_region_data_from_db(self.cursor, event.target)
+        if region_data is None:
+            self.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(f"\u2e30 The region {event.target} does not exist!"))
+            return
+        
         target_time = 0
         if minor:
             target_time = region_data["seconds_minor"] - event.delay
@@ -325,6 +343,10 @@ if __name__ == "__main__":
         nation_name = args.nation_name
     else:
         nation_name = input("Please enter your main nation name: ")
+
+    if not util.check_if_nation_exists(nation_name):
+        print(f"The nation {nation_name} does not exist. Try again.")
+        sys.exit(1)
 
     util.bootstrap(nation_name, args.regenerate_db)
 

@@ -1,6 +1,11 @@
-import threading, time, typing, sqlite3, os, subprocess, sys, sseclient, re, requests
+# utility.py - Utility functions for the entire Everblaze suite of tools
+# Authored by Merethin, licensed under the BSD-2-Clause license.
+# This file makes 1 (one) API call (in check_if_nation_exists()) - to check if a user's nation exists.
+# Additional API calls are imported from db.py, and used in bootstrap().
 
-next_api_hit = 0 # Next time we can hit the API (in UNIX time). Starts at 0, so we can use it immediately the first time.
+import threading, time, typing, sqlite3, os, sseclient, re, requests, db
+
+next_api_hit: float = 0 # Next time we can hit the API (in UNIX time). Starts at 0, so we can use it immediately the first time.
 next_api_hit_lock = threading.Lock()
 
 # Call this before making any API request to NationStates. It will make sure all requests are 
@@ -10,8 +15,8 @@ def ensure_api_rate_limit(delay: float):
     global next_api_hit_lock
 
     while True:
-        next_api_hit_time = 0
-        current_time = 0
+        next_api_hit_time: float = 0
+        current_time: float = 0
 
         with next_api_hit_lock:
             next_api_hit_time = next_api_hit # fetch a copy of the value so that we can use it outside the lock
@@ -124,10 +129,10 @@ def fetch_canon_name(cursor: sqlite3.Cursor, region: str) -> str | None:
 
 # List of triggers, with arbitrary additional values.
 class TriggerList:
-    def __init__(self):
-        self.triggers = []
+    def __init__(self) -> None:
+        self.triggers: list[dict] = []
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.triggers)
 
     # Add a new trigger to the list.
@@ -152,6 +157,7 @@ class TriggerList:
         for trigger in self.triggers:
             if "update_index" not in trigger.keys():
                 region_data = fetch_region_data_from_db(cursor, trigger["api_name"])
+                assert region_data
                 trigger["update_index"] = region_data["update_index"]
 
         self.triggers.sort(key=lambda x: x["update_index"])
@@ -168,7 +174,7 @@ class TriggerList:
     
     # Remove a region from the trigger list, if present, and return it.
     # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
-    def remove_trigger(self, api_name: str) -> typing.Dict:
+    def remove_trigger(self, api_name: str) -> typing.Optional[typing.Dict]:
         value = None
 
         for trigger in self.triggers:
@@ -198,7 +204,7 @@ class TriggerList:
 # Otherwise, it will only be generated if there isn't already one.
 def bootstrap(nation: str, regenerate_db: bool):
     if(regenerate_db or not os.path.exists("regions.db")):
-        subprocess.call([sys.executable, "db.py", nation]) 
+        db.generate_database(nation)
 
 UPDATE_REGEX = re.compile(r"%%([a-z0-9_]+)%% updated\.")
 
@@ -212,3 +218,21 @@ def connect_sse(url: str, headers: typing.Dict) -> sseclient.SSEClient:
             return connect_sse(url, headers)
         else:
             raise e
+        
+def check_if_nation_exists(nation: str) -> bool:
+    url = f"https://www.nationstates.net/cgi-bin/api.cgi?nation={format_nation_or_region(nation)}&q=name"
+    headers = {'User-Agent': f"Everblaze by Merethin, used by {nation}"}
+
+    ensure_api_rate_limit(0.7)
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return True
+    elif response.status_code == 404:
+        return False
+    else:
+        # Should never happen unless something's wrong with your connection to NS, in which case, it will throw an error as we can't connect to NS anyway.
+        typing.assert_never(response.status_code)
+
+# If update is "minor" with any capitalization, returns minor. Anything else is assumed to be major.
+def is_minor(update: str) -> bool:
+    return update.lower() == "minor"
