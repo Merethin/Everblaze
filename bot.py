@@ -637,6 +637,8 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
             and (x.content.lower().startswith("t")
             or x.content.lower() == "quit"
             or x.content.lower() == "miss"
+            or x.content.lower() == "lemb"
+            or x.content.lower() == "lwfe"
             or x.content.lower().startswith("endos")
             or x.content.lower().startswith("delay")
             or x.content.lower().startswith("switch")
@@ -703,7 +705,11 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
                 if match is not None:
                     embassy = util.format_nation_or_region(match.groups()[0])
                     embassy_blacklist.discard(embassy)
-                    await interaction.followup.send(f"Removed {embassy} to the embassy blacklist, if it was there")
+                    await interaction.followup.send(f"Removed {embassy} from the embassy blacklist, if it was there")
+            if op.content.lower() == "lemb":
+                await interaction.followup.send(f"Embassy blacklist: {",".join(embassy_blacklist)}")
+            if op.content.lower() == "lwfe":
+                await interaction.followup.send(f"WFE blacklist: {",".join(wfe_blacklist)}")
             continue
 
         message: typing.Optional[discord.WebhookMessage] = None

@@ -159,6 +159,18 @@ Commands (messages sent during a session):
 
 `delay DELAY`: Sets the optimal trigger time to DELAY seconds.
 
+`blemb EMBASSY`: Adds an embassy to the embassy blacklist.
+
+`wlemb EMBASSY`: Removes an embassy from the embassy blacklist.
+
+`blwfe SENTENCE`: Adds a sentence to the WFE blacklist. The sentence will be matched disregarding capitalization.
+
+`wlwfe SENTENCE`: Removes a sentence from the WFE blacklist. The sentence will be matched disregarding capitalization.
+
+`lemb`: List the current embassy blacklist.
+
+`lwfe`: List the current WFE blacklist.
+
 ```/triggers```
 
 Display the current trigger list.
