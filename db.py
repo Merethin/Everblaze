@@ -71,10 +71,10 @@ def parse_region_data(nation: str, filename: str) -> typing.List[typing.Tuple]:
     last_major = first_region.find("LASTMAJORUPDATE")
     last_minor = first_region.find("LASTMINORUPDATE")
 
-    assert last_major, "Regional data dump has invalid formatting!"
-    assert last_minor, "Regional data dump has invalid formatting!"
-    assert last_major.text, "Regional data dump has invalid formatting!"
-    assert last_minor.text, "Regional data dump has invalid formatting!"
+    assert last_major is not None, "Regional data dump has invalid formatting!"
+    assert last_minor is not None, "Regional data dump has invalid formatting!"
+    assert last_major.text is not None, "Regional data dump has invalid formatting!"
+    assert last_minor.text is not None, "Regional data dump has invalid formatting!"
 
     last_major_start = strip_minutes_and_seconds(int(last_major.text))
     last_minor_start = strip_minutes_and_seconds(int(last_minor.text))
@@ -92,8 +92,19 @@ def parse_region_data(nation: str, filename: str) -> typing.List[typing.Tuple]:
         password = 0
         if api_name in passworded_regions:
             password = 1
+        wfe = region.find("FACTBOOK").text
+        embassies = []
+        for child in region.find("EMBASSIES"):
+            if("type" in child.attrib.keys()):
+                if(child.attrib["type"] in ["denied", "rejected"]):
+                    # Skipping unwanted embassy
+                    continue
+                if(child.attrib["type"] in ["requested", "pending", "invited"]):
+                    pass # Add it nonetheless. We don't want to retag regions we've already tagged even if the embassy is pending.
 
-        region_data.append((canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password))
+            embassies.append(util.format_nation_or_region(child.text))
+
+        region_data.append((canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password, wfe, ",".join(embassies)))
 
     return region_data
 
@@ -104,10 +115,10 @@ def generate_database(nation: str) -> None:
     con = sqlite3.connect("regions.db")
 
     cursor = con.cursor()
-    cursor.execute("CREATE TABLE regions(canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password)")
+    cursor.execute("CREATE TABLE regions(canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password, wfe, embassies)")
 
     download_region_data_dump(nation)
     region_data = parse_region_data(nation,"regions.xml")
 
-    cursor.executemany("INSERT INTO regions VALUES(?, ?, ?, ?, ?, ?, ?, ?)", region_data)
+    cursor.executemany("INSERT INTO regions VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", region_data)
     con.commit()

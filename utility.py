@@ -36,7 +36,7 @@ def format_nation_or_region(name: str) -> str:
 # Convert a row from a database query to a dictionary with well-known keys.
 def format_database_data(data) -> typing.Dict:
     output = {}
-    # Database row layout: (canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password)
+    # Database row layout: (canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password, wfe, embassies)
     output["canon_name"] = data[0]
     output["api_name"] = data[1]
     output["update_index"] = data[2]
@@ -45,6 +45,8 @@ def format_database_data(data) -> typing.Dict:
     output["delendos"] = data[5]
     output["executive"] = data[6]
     output["password"] = data[7]
+    output["wfe"] = data[8]
+    output["embassies"] = data[9]
 
     return output
 

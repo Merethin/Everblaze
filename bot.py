@@ -627,6 +627,9 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
 
     guilds[interaction.guild.id].ongoing_tags += 1
 
+    wfe_blacklist: set[str] = set()
+    embassy_blacklist: set[str] = set()
+
     while True:
         op = await bot.wait_for(
             "message",
@@ -636,7 +639,11 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
             or x.content.lower() == "miss"
             or x.content.lower().startswith("endos")
             or x.content.lower().startswith("delay")
-            or x.content.lower().startswith("switch")),
+            or x.content.lower().startswith("switch")
+            or x.content.lower().startswith("blwfe")
+            or x.content.lower().startswith("wlwfe")
+            or x.content.lower().startswith("blemb")
+            or x.content.lower().startswith("wlemb")),
             timeout=None,
         )
 
@@ -673,6 +680,30 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
                 if match is not None:
                     switch_time = int(match.groups()[0])
                     await interaction.followup.send(f"Switch time changed to {switch_time}s")
+            elif op.content.lower().startswith("blwfe"):
+                match = re.match(r"blwfe[\s]+([0-9a-z_ ]+)", op.content.lower())
+                if match is not None:
+                    text = match.groups()[0]
+                    wfe_blacklist.add(embassy)
+                    await interaction.followup.send(f"Added \"{text}\" to the WFE blacklist")
+            elif op.content.lower().startswith("wlwfe"):
+                match = re.match(r"wlwfe[\s]+([0-9a-z_ ]+)", op.content.lower())
+                if match is not None:
+                    text = match.groups()[0]
+                    wfe_blacklist.discard(embassy)
+                    await interaction.followup.send(f"Removed \"{text}\" from the WFE blacklist, if it was there")
+            elif op.content.lower().startswith("blemb"):
+                match = re.match(r"blemb[\s]+([0-9a-z_ ]+)", op.content.lower())
+                if match is not None:
+                    embassy = util.format_nation_or_region(match.groups()[0])
+                    embassy_blacklist.add(embassy)
+                    await interaction.followup.send(f"Added {embassy} to the embassy blacklist")
+            elif op.content.lower().startswith("wlemb"):
+                match = re.match(r"wlemb[\s]+([0-9a-z_ ]+)", op.content.lower())
+                if match is not None:
+                    embassy = util.format_nation_or_region(match.groups()[0])
+                    embassy_blacklist.discard(embassy)
+                    await interaction.followup.send(f"Removed {embassy} to the embassy blacklist, if it was there")
             continue
 
         message: typing.Optional[discord.WebhookMessage] = None
@@ -731,6 +762,16 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
                     update_time = region["seconds_minor"]
                 else:
                     update_time = region["seconds_major"]
+
+                embassies: list[str] = region["embassies"].split(",")
+                for embassy in embassy_blacklist:
+                    if embassy in embassies:
+                        continue
+
+                wfe: str = region["wfe"]
+                for entry in wfe_blacklist:
+                    if entry in wfe.lower():
+                        continue
 
                 # Large region is probably updating. Let's wait until it ends and then find a more reliable trigger/target.
                 while (update_time - target_update_time) > 2 or time_since_last_update > 1.5:
