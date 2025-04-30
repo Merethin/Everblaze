@@ -174,6 +174,10 @@ async def config(interaction: discord.Interaction, setup_role: discord.Role):
 
 @bot.tree.command(description="Add a separate setup role, ping role and target list to a channel.")
 async def addch(interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, invisible: bool):
+    if interaction.guild.id not in guilds.keys():
+        await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
+        return
+    
     if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
         await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
         return
@@ -200,6 +204,10 @@ async def addch(interaction: discord.Interaction, setup_role: discord.Role, ping
 
 @bot.tree.command(description="Remove the separate ping role and target list from a channel.")
 async def remch(interaction: discord.Interaction):
+    if interaction.guild.id not in guilds.keys():
+        await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
+        return
+    
     if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
         await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
         return
