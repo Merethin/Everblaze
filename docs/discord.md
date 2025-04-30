@@ -89,6 +89,14 @@ Clear all triggers and reset internal update data.
 
 Currently, Everblaze stores the last region that has updated in order to support things like starting `/select` mid-update. The official bot should restart and clear this stuff after every update, but in case it doesn't, or you're self-hosting it, you may need to run `/reset` to bring the "last region that has updated" back to the beginning of update, before setting up triggers.
 
+This command cannot be used when there is a tag session (started with `/tag`) in progress. This is because the tag session depends on the last update data. If you just want to clear triggers in one channel without resetting everything else, see `/clear`.
+
+It is recommended to run this command before or after update, but it is not recommended to run it in-between.
+
+```/clear```
+
+Clear all triggers in a specific channel.
+
 ```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance> (confirm: True)```
 
 Arguably one of the most powerful commands in Everblaze. Its functionality is similar to that of QuickDraw, that is, you give it the update to pick triggers for (major or minor), the endorsements you will have on the point, the minimum time to switch between targets, and the desired trigger time, and it will give you unpassworded, executive-delegacy regions to pick from. The targets you pick will automatically be added to the trigger list.
@@ -129,9 +137,9 @@ All other parameters work the same way as in `/select`:
 
 `<late_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much later can it go? That is, if your ideal delay is 6 seconds, and your late tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 5-second triggers if it can't find one.
 
-```/tag <update> <point_endos> <switch_time> <ideal_delay> <early_tolerance> <late_tolerance>```
+```/tag <update> <point_endos> <switch_time> <min_delay>```
 
-Starts a tag raiding session. In this session, Everblaze will repeatedly wait for someone to post a point nation, wait for all participants to endorse it, then dynamically choose a target according to the parameters above, and then send a ping when the trigger updates, until asked to quit.
+Starts a tag raiding session. In this session, Everblaze will repeatedly wait for someone to post a point nation, wait for all participants to endorse it, then dynamically choose a target according to the parameters above, and then send a link to the target for participants to immediately move to, until asked to quit.
 
 Parameters:
 
@@ -141,13 +149,9 @@ The following are parameters, but can also be changed mid-session.
 
 `<point_endos>` should be the number of endorsements you are expecting to have on the point nation. This is used both to find targets and to know when all participants have endorsed the point and a target can be posted.
 
-`<switch_time>` should be the minimum time, in seconds, that you want to have between the target being chosen and the trigger updating.
+`<switch_time>` should be the minimum time, in seconds, that you want to have between the last person endorsing the point and the target being posted.
 
-`<ideal_delay>` should be the optimal trigger time in seconds.
-
-`<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
-
-`<late_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much later can it go? That is, if your ideal delay is 6 seconds, and your late tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 5-second triggers if it can't find one.
+`<min_delay>` should be the minimum/optimal trigger time in seconds.
 
 Commands (messages sent during a session):
 
@@ -161,7 +165,7 @@ Commands (messages sent during a session):
 
 `switch SWITCH`: Sets the minimum switch time to SWITCH seconds.
 
-`delay IDEAL;EARLY;LATE`: Sets the optimal trigger time to IDEAL seconds, the early tolerance to EARLY seconds, and the late tolerance to LATE seconds.
+`delay DELAU`: Sets the optimal trigger time to DELAY seconds.
 
 ```/triggers```
 
@@ -196,4 +200,4 @@ Unlike individual triggers, the region linked here is the target, not the trigge
 The ping from Everblaze will look like this:
 `@Ping Role <target> will update in <delay>s (<trigger> updated)!`
 
-Added with `/add_target`, `/select`, `/tag` and `/snipe`.
+Added with `/add_target`, `/select`, and `/snipe`.
