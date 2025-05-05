@@ -76,7 +76,7 @@ async def on_ready():
     # Load channel data from the database
     for channel in data:
         if channel[0] in guilds.keys():
-            guilds[channel[0]].channels[channel[1]] = TriggerChannel(channel[1], channel[2], channel[3], util.TriggerList())
+            guilds[channel[0]].channels[channel[1]] = TriggerChannel(channel[2], channel[3], channel[4], util.TriggerList())
 
     try:
         synced = await bot.tree.sync()
