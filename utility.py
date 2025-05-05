@@ -113,6 +113,11 @@ def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int, start: int =
 
     return output
 
+# Returns the number of regions in the database.
+def count_regions(cursor: sqlite3.Cursor) -> int:
+    cursor.execute("SELECT count(update_index) FROM regions")
+    return int(cursor.fetchone()[0])
+
 # Fetch the update index for a region from the local database.
 # The region's name must be formatted with lowercase letters and underscores (as output by format_nation_or_region()).
 def fetch_update_index(cursor: sqlite3.Cursor, region: str) -> int | None:

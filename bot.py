@@ -3,11 +3,12 @@
 # The only API calls made by this file are imported from db.py and utility.py, through bootstrap() and check_if_nation_exists().
 
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, json, asyncio, typing, re, time, math, sys, sseclient, threading
+import discord, sqlite3, argparse, json, asyncio, typing, re, time, math, sys, sseclient, threading, errno
 from discord.ext import commands
 import utility as util
 from pagination import Pagination
 from dataclasses import dataclass
+from socket import error as SocketError
 
 # Stores information about a region update event, specifically the last one that happened.
 # It stores the update index of the region, the UNIX timestamp of when it updated, and the previously predicted minor and major update times for that region.
@@ -38,10 +39,13 @@ class Guild:
 
 # Global variables.
 guilds: dict[int, Guild] = {} # All discord servers the bot is in, with their own specific configuration and trigger lists.
+everblaze_con: typing.Optional[sqlite3.Connection] = None # Everblaze region database connection
 everblaze_cursor: typing.Optional[sqlite3.Cursor] = None # Everblaze region database cursor
 bot_con: typing.Optional[sqlite3.Connection] = None # Connection to the bot database
 bot_cursor: typing.Optional[sqlite3.Cursor] = None # Bot database cursor
 nation_name: str = "" # The main nation of the player using this script
+
+region_count: int = 0 # The number of regions contained in the database.
 
 # Config loaded from .env, in order to access the Discord token.
 settings: dict[str, str | None] = dotenv_values(".env")
@@ -88,6 +92,7 @@ async def on_ready():
     headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (Discord bot) by Merethin, used by {nation_name}"}
 
     # Connect to the SSE feed for: update events, endorsement events, and WA resignation events.
+    util.ensure_api_rate_limit(0.7)
     client = util.connect_sse(url, headers)
 
     print(f"Connected to {url}.")
@@ -858,6 +863,7 @@ def update_region(api_name: str, last_update: LastUpdate, channel_id: int, ping_
 
 @bot.event
 async def on_region_update(event: typing.Tuple[str, int]):
+    global everblaze_con, everblaze_cursor, region_count
     assert everblaze_cursor
 
     (region, timestamp) = event
@@ -869,17 +875,36 @@ async def on_region_update(event: typing.Tuple[str, int]):
     
     messages = []
     
-    for id, server in guilds.items():
-        guild = bot.get_guild(id)
+    for i, server in guilds.items():
+        guild = bot.get_guild(i)
 
         server.last_update = LastUpdate(data["update_index"], float(timestamp), data["seconds_minor"], data["seconds_major"])
 
-        for id, channel in server.channels.items():
+        for j, channel in server.channels.items():
             channel_targets = get_trigger_list(channel)
-            messages += update_region(region, server.last_update, id, channel.ping_role, guild, channel_targets)
+            messages += update_region(region, server.last_update, j, channel.ping_role, guild, channel_targets)
 
     coroutines = [channel.send(message) for (channel, message) in messages]
     await asyncio.gather(*coroutines)
+
+    if data["update_index"] == (region_count-1):
+        # Warzone Trinidad updated unless admins shuffle update order
+        print("Resetting update data and regenerating database...")
+
+        for i, server in guilds.items():
+            server.last_update = None
+
+            for j, channel in server.channels.items():
+                channel.session = None
+
+        everblaze_con.close()
+
+        util.bootstrap(nation_name, True)
+
+        everblaze_con = sqlite3.connect("regions.db")
+        everblaze_cursor = everblaze_con.cursor()
+
+        region_count = util.count_regions(everblaze_cursor)
 
 ENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ endorsed @@([a-z0-9_]+)@@")
 UNENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ withdrew its endorsement from @@([a-z0-9_]+)@@")
@@ -941,7 +966,7 @@ def sse_listener(client: sseclient.SSEClient, cancel_event: threading.Event) -> 
     return None # SSE feed aborted/disconnected for some reason
 
 def main() -> None:
-    global everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name
+    global everblaze_con, everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name, region_count
     parser = argparse.ArgumentParser(prog="everblaze-bot", description="Everblaze Discord bot for NationStates R/D")
     parser.add_argument("-n", "--nation-name", default="")
     parser.add_argument("-r", '--regenerate-db', action='store_true')
@@ -960,6 +985,9 @@ def main() -> None:
 
     everblaze_con = sqlite3.connect("regions.db")
     everblaze_cursor = everblaze_con.cursor()
+
+    region_count = util.count_regions(everblaze_cursor)
+    print(f"Loading region database with {region_count} regions")
 
     bot_con = sqlite3.connect("bot.db")
     bot_cursor = bot_con.cursor()
