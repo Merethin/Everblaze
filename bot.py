@@ -98,12 +98,42 @@ async def on_ready():
     print(f"Connected to {url}.")
     print(f"User Agent: '{headers["User-Agent"]}'")
 
+    # Flood control
+    first_reset: float | None = None
+    resets: int = 0
+
     while True:
         # Listen to SSE events on loop.
         response = await asyncio.to_thread(sse_listener, client, sse_cancel_event)
+
         if response is None:
-            return
+            sys.exit(0)
+            
         (event, data) = response
+
+        if event == "disconnect":
+            # Disconnected, try to reconnect
+            if first_reset is None:
+                first_reset = time.time()
+
+            if (time.time() - first_reset) > 600:
+                first_reset = time.time()
+                resets = 1 # First reset in this time window
+            else:
+                resets += 1 # One more reset in this time window
+
+            if resets >= 5:
+                print("Connection reset 5 or more times in less than 10 minutes. Shutting down to prevent flooding requests...")
+                sys.exit(1)
+
+            print("Connection to NationStates reset, reconnecting...")
+
+            util.ensure_api_rate_limit(0.7)
+            client = util.connect_sse(url, headers)
+
+            print(f"Connected to {url}.")
+            continue
+
         bot.dispatch(event, data)
 
 # Check if a command follows the following requirements:
@@ -911,59 +941,64 @@ UNENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ withdrew its endorsement from @@([a
 RESIGN_REGEX = re.compile(r"@@([a-z0-9_]+)@@ resigned from the World Assembly")
 
 def sse_listener(client: sseclient.SSEClient, cancel_event: threading.Event) -> typing.Optional[typing.Tuple[str, typing.Tuple[str, int] | typing.Tuple[str, str]]]:
-    for event in client:
-        # We only notice this after a heartbeat arrives from the connection.
-        if cancel_event.is_set():
-            print("Cancelled thread, closing connection")
-            return None
-        
-        if event.data: # If the event has no data it's a heartbeat. We do want to receive heartbeats however so that we can check for cancellation above.
-            data = json.loads(event.data)
-            happening = data["str"]
-
-            # The update happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
-            # and if so, retrieve the region name.
-            match = util.UPDATE_REGEX.match(happening)
-            if match is not None:
-                region_name = match.groups()[0]
-
-                print(f"log: {region_name} updated!")
-
-                time = data["time"]
-                assert type(time) == int
-                return ("region_update", (region_name, time))
+    try:
+        for event in client:
+            # We only notice this after a heartbeat arrives from the connection.
+            if cancel_event.is_set():
+                print("Cancelled thread, closing connection")
+                return None
             
-            # The endorsement happening line is formatted like this: "@@endorser@@ endorsed @@endorsed@@" We want to know if the happening matches this, 
-            # and if so, retrieve the endorsed nation's name.
-            match = ENDO_REGEX.match(happening)
-            if match is not None:
-                target = match.groups()[1]
+            if event.data: # If the event has no data it's a heartbeat. We do want to receive heartbeats however so that we can check for cancellation above.
+                data = json.loads(event.data)
+                happening = data["str"]
 
-                print(f"log: {target} was endorsed!")
+                # The update happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
+                # and if so, retrieve the region name.
+                match = util.UPDATE_REGEX.match(happening)
+                if match is not None:
+                    region_name = match.groups()[0]
 
-                return ("wa", ("endo", target))
-            
-            # The unendorsement happening line is formatted like this: "@@endorser@@ withdrew its endorsement from @@endorsed@@" 
-            # We want to know if the happening matches this, and if so, retrieve the unendorsed nation's name.
-            match = UNENDO_REGEX.match(happening)
-            if match is not None:
-                target = match.groups()[1]
+                    print(f"log: {region_name} updated!")
 
-                print(f"log: {target} was unendorsed!")
+                    time = data["time"]
+                    assert type(time) == int
+                    return ("region_update", (region_name, time))
+                
+                # The endorsement happening line is formatted like this: "@@endorser@@ endorsed @@endorsed@@" We want to know if the happening matches this, 
+                # and if so, retrieve the endorsed nation's name.
+                match = ENDO_REGEX.match(happening)
+                if match is not None:
+                    target = match.groups()[1]
 
-                return ("wa", ("unendo", target))
-            
-            # The WA resignation happening line is formatted like this: "@@nation@@ resigned from the World Assembly" 
-            # We want to know if the happening matches this, and if so, retrieve the nation's name.
-            match = RESIGN_REGEX.match(happening)
-            if match is not None:
-                target = match.groups()[0]
+                    print(f"log: {target} was endorsed!")
 
-                print(f"log: {target} resigned from the WA!")
+                    return ("wa", ("endo", target))
+                
+                # The unendorsement happening line is formatted like this: "@@endorser@@ withdrew its endorsement from @@endorsed@@" 
+                # We want to know if the happening matches this, and if so, retrieve the unendorsed nation's name.
+                match = UNENDO_REGEX.match(happening)
+                if match is not None:
+                    target = match.groups()[1]
 
-                return ("wa", ("resign", target))
-            
-    return None # SSE feed aborted/disconnected for some reason
+                    print(f"log: {target} was unendorsed!")
+
+                    return ("wa", ("unendo", target))
+                
+                # The WA resignation happening line is formatted like this: "@@nation@@ resigned from the World Assembly" 
+                # We want to know if the happening matches this, and if so, retrieve the nation's name.
+                match = RESIGN_REGEX.match(happening)
+                if match is not None:
+                    target = match.groups()[0]
+
+                    print(f"log: {target} resigned from the WA!")
+
+                    return ("wa", ("resign", target))
+                
+        return ("disconnect", ("unknown", "")) # SSE feed aborted/disconnected for some reason
+    except SocketError as e:
+        if e.errno != errno.ECONNRESET:
+            raise # Not disconnected by peer
+        return ("disconnect", ("peer", "")) # Socket disconnected by peer
 
 def main() -> None:
     global everblaze_con, everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name, region_count
@@ -1012,6 +1047,7 @@ def main() -> None:
 
     print("Closing SSE thread...")
     sse_cancel_event.set()
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
