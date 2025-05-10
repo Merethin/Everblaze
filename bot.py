@@ -824,7 +824,7 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
 
                 # Large region is probably updating. Let's wait until it ends and then find a more reliable trigger/target.
                 while (update_time - target_update_time) > 2 or time_since_last_update > 1.5:
-                    await asyncio.sleep(0.3) # Wait for a bit longer before finding a target.
+                    await asyncio.sleep(0.1) # Wait for a bit longer before finding a target.
 
                     last_update = guilds[interaction.guild.id].last_update
                     assert last_update
