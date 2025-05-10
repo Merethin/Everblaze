@@ -696,7 +696,7 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
 
         if op.content.lower().startswith("t"):
             # Point provided. Fetch nation name
-            match = re.match(r"t[\s]+http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_ ]+)", op.content.lower())
+            match = re.match(r"t[\s]+http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_- ]+)", op.content.lower())
             if match is not None:
                 nation = util.format_nation_or_region(match.groups()[0])
             else:
@@ -936,9 +936,9 @@ async def on_region_update(event: typing.Tuple[str, int]):
 
         region_count = util.count_regions(everblaze_cursor)
 
-ENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ endorsed @@([a-z0-9_]+)@@")
-UNENDO_REGEX = re.compile(r"@@([a-z0-9_]+)@@ withdrew its endorsement from @@([a-z0-9_]+)@@")
-RESIGN_REGEX = re.compile(r"@@([a-z0-9_]+)@@ resigned from the World Assembly")
+ENDO_REGEX = re.compile(r"@@([a-z0-9_-]+)@@ endorsed @@([a-z0-9_-]+)@@")
+UNENDO_REGEX = re.compile(r"@@([a-z0-9_-]+)@@ withdrew its endorsement from @@([a-z0-9_-]+)@@")
+RESIGN_REGEX = re.compile(r"@@([a-z0-9_-]+)@@ resigned from the World Assembly")
 
 def sse_listener(client: sseclient.SSEClient, cancel_event: threading.Event) -> typing.Optional[typing.Tuple[str, typing.Tuple[str, int] | typing.Tuple[str, str]]]:
     try:
