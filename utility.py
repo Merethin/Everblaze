@@ -213,7 +213,7 @@ def bootstrap(nation: str, regenerate_db: bool):
     if(regenerate_db or not os.path.exists("regions.db")):
         db.generate_database(nation)
 
-UPDATE_REGEX = re.compile(r"%%([a-z0-9_-]+)%% updated\.")
+UPDATE_REGEX = re.compile(r"%%([a-z0-9_\-]+)%% updated\.")
 
 def connect_sse(url: str, headers: typing.Dict) -> sseclient.SSEClient:
     try:

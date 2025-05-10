@@ -57,7 +57,7 @@ class CommandInput(Input):
         if command[0] == "add" or command[0] == "+":
             self.app.post_message(self.AddTarget(util.format_nation_or_region(command[1])))
         if command[0] == "snipe":
-            match = re.match("([a-zA-Z0-9_- ]+);(minor|major);([0-9]+)(s|m);([0-9]+);([0-9]+)", command[1])
+            match = re.match("([a-zA-Z0-9_\- ]+);(minor|major);([0-9]+)(s|m);([0-9]+);([0-9]+)", command[1])
             if match is not None:
                 groups = match.groups()
                 region_name = groups[0]
@@ -360,7 +360,7 @@ if __name__ == "__main__":
     elif len(args.raidfile) != 0:
         with open(args.raidfile, "r") as raidfile:
             for line in raidfile.readlines():
-                match = re.match(r"([a-zA-Z0-9_- ]+) \(([a-zA-Z0-9_- ]+);([0-9]+)s\)", line.rstrip())
+                match = re.match(r"([a-zA-Z0-9_\- ]+) \(([a-zA-Z0-9_\- ]+);([0-9]+)s\)", line.rstrip())
                 if match is not None:
                     groups = match.groups()
                     target = groups[0]
