@@ -3,7 +3,7 @@
 # The only API calls made by this file are imported from db.py and utility.py, through bootstrap() and check_if_nation_exists().
 
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, json, asyncio, typing, re, time, math, sys, sseclient, threading, errno
+import discord, sqlite3, argparse, json, asyncio, typing, re, time, math, sys, sseclient, threading, errno, os
 from discord.ext import commands
 import utility as util
 from pagination import Pagination
@@ -46,6 +46,8 @@ bot_cursor: typing.Optional[sqlite3.Cursor] = None # Bot database cursor
 nation_name: str = "" # The main nation of the player using this script
 
 region_count: int = 0 # The number of regions contained in the database.
+
+self_reset_delay: typing.Optional[int] = None # The number of seconds after update to self-reset at.
 
 # Config loaded from .env, in order to access the Discord token.
 settings: dict[str, str | None] = dotenv_values(".env")
@@ -898,7 +900,7 @@ def update_region(api_name: str, last_update: LastUpdate, channel_id: int, ping_
 
 @bot.event
 async def on_region_update(event: typing.Tuple[str, int]):
-    global everblaze_con, everblaze_cursor, region_count
+    global everblaze_con, everblaze_cursor, region_count, self_reset_delay
     assert everblaze_cursor
 
     (region, timestamp) = event
@@ -924,22 +926,13 @@ async def on_region_update(event: typing.Tuple[str, int]):
 
     if data["update_index"] == (region_count-1):
         # Warzone Trinidad updated unless admins shuffle update order
-        print("Resetting update data and regenerating database...")
+        if self_reset_delay is not None:
+            print("Starting self-reset timer...")
 
-        for i, server in guilds.items():
-            server.last_update = None
+            await asyncio.sleep(self_reset_delay)
 
-            for j, channel in server.channels.items():
-                channel.session = None
-
-        everblaze_con.close()
-
-        util.bootstrap(nation_name, True)
-
-        everblaze_con = sqlite3.connect("regions.db")
-        everblaze_cursor = everblaze_con.cursor()
-
-        region_count = util.count_regions(everblaze_cursor)
+            os.execl(*sys.argv)
+        
 
 ENDO_REGEX = re.compile(r"@@([a-z0-9_\-]+)@@ endorsed @@([a-z0-9_\-]+)@@")
 UNENDO_REGEX = re.compile(r"@@([a-z0-9_\-]+)@@ withdrew its endorsement from @@([a-z0-9_\-]+)@@")
@@ -1005,12 +998,21 @@ def sse_listener(client: sseclient.SSEClient, cancel_event: threading.Event) -> 
             raise # Not disconnected by peer
         return ("disconnect", ("peer", "")) # Socket disconnected by peer
 
+def check_positive(value):
+    ivalue = int(value)
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
+    return ivalue
+
 def main() -> None:
-    global everblaze_con, everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name, region_count
+    global everblaze_con, everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name, region_count, self_reset_delay
     parser = argparse.ArgumentParser(prog="everblaze-bot", description="Everblaze Discord bot for NationStates R/D")
     parser.add_argument("-n", "--nation-name", default="")
     parser.add_argument("-r", '--regenerate-db', action='store_true')
+    parser.add_argument("-s", "--self-reset", type=check_positive)
     args = parser.parse_args()
+
+    self_reset_delay = parser.self_reset
 
     if len(args.nation_name) != 0:
         nation_name = args.nation_name
