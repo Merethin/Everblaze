@@ -268,6 +268,22 @@ async def remch(interaction: discord.Interaction):
 
     await interaction.response.send_message("Channel configuration removed!", ephemeral=True)
 
+def compose_trigger(api_name: str, target: typing.Optional[str] = None, delay: typing.Optional[int] = None, message: typing.Optional[str] = None) -> dict:
+    trigger = {
+        "api_name": api_name
+    }
+
+    if target is not None:
+        trigger["target"] = target
+
+    if delay is not None:
+        trigger["delay"] = delay
+
+    if message is not None:
+        trigger["message"] = message
+
+    return trigger
+
 # Format a string with trigger data, including the link, triggers and predicted update times.
 def display_trigger(trigger: typing.Dict) -> str:
     assert everblaze_cursor
@@ -276,10 +292,14 @@ def display_trigger(trigger: typing.Dict) -> str:
     if data is None:
         return ""
 
+    message_shown = ""
+    if "message" in trigger.keys():
+        message_shown = f" - message: \"{trigger["message"]}\""
+
     if "target" not in trigger.keys():
-        return f"https://www.nationstates.net/region={trigger["api_name"]} - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
+        return f"https://www.nationstates.net/region={trigger["api_name"]} - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
     
-    return f"https://www.nationstates.net/region={trigger["target"]} ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major"
+    return f"https://www.nationstates.net/region={trigger["target"]} ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
 
 # Format a string with a link to a trigger.
 def display_trigger_simple(trigger: typing.Dict) -> str:
@@ -290,13 +310,16 @@ def display_trigger_simple(trigger: typing.Dict) -> str:
 
 # Format a region update happening given a trigger that has just updated.
 def format_update_log(trigger: typing.Dict) -> str:
+    if "message" in trigger.keys():
+        return trigger["message"]
+    
     if "target" not in trigger.keys():
         return f"{trigger["api_name"]} updated!"
     
     return f"{trigger["target"]} will update in {trigger["delay"]}s ({trigger["api_name"]} updated)!"
 
 @bot.tree.command(description="Add a new trigger.")
-async def add(interaction: discord.Interaction, trigger: str):
+async def add(interaction: discord.Interaction, trigger: str, message: typing.Optional[str]):
     if not await check_command_permissions(interaction):
         return
     
@@ -304,27 +327,21 @@ async def add(interaction: discord.Interaction, trigger: str):
     
     targets = get_trigger_list(get_channel_to_edit(interaction))
     
-    targets.add_trigger({
-        "api_name": util.format_nation_or_region(trigger)
-    })
+    targets.add_trigger(compose_trigger(util.format_nation_or_region(trigger), message=message))
     targets.sort_triggers(everblaze_cursor)
 
     await interaction.response.send_message(f"Added trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
 
 @bot.tree.command(description="Add a new target and associated trigger.")
-async def add_target(interaction: discord.Interaction, target: str, trigger: str, delay: int):
+async def add_target(interaction: discord.Interaction, target: str, trigger: str, delay: int, message: typing.Optional[str]):
     if not await check_command_permissions(interaction):
         return
     
     assert everblaze_cursor
     
     targets = get_trigger_list(get_channel_to_edit(interaction))
-    
-    targets.add_trigger({
-        "api_name": util.format_nation_or_region(trigger),
-        "target": util.format_nation_or_region(target),
-        "delay": delay,
-    })
+
+    targets.add_trigger(compose_trigger(util.format_nation_or_region(trigger), target=util.format_nation_or_region(target), delay=delay, message=message))
     targets.sort_triggers(everblaze_cursor)
 
     await interaction.response.send_message(f"Added target {target} with trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
@@ -445,7 +462,7 @@ async def skip(interaction: discord.Interaction):
     await interaction.response.send_message(f"Removed {display_trigger_simple(trigger)}")
     
 @bot.tree.command(description="Find a trigger for a selected target.")
-async def snipe(interaction: discord.Interaction, target: str, update: str, ideal_delay: int, early_tolerance: int, late_tolerance: int):
+async def snipe(interaction: discord.Interaction, target: str, update: str, ideal_delay: int, early_tolerance: int, late_tolerance: int, message: typing.Optional[str]):
     if not await check_command_permissions(interaction):
         return
     
@@ -477,11 +494,7 @@ async def snipe(interaction: discord.Interaction, target: str, update: str, idea
 
     targets = get_trigger_list(get_channel_to_edit(interaction))
 
-    targets.add_trigger({
-        "target": util.format_nation_or_region(target),
-        "api_name": trigger["api_name"],
-        "delay": delay,
-    })
+    targets.add_trigger(compose_trigger(trigger["api_name"], target=util.format_nation_or_region(target), delay=delay, message=message))
     targets.sort_triggers(everblaze_cursor)
 
     await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: {delay}s)", ephemeral=should_be_ephemeral(interaction))
@@ -505,7 +518,7 @@ class BaseRegionView(discord.ui.View):
         return True
 
 @bot.tree.command(description="Find and select targets with no password and an executive delegate.")
-async def select(interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int, confirm: bool = True):
+async def select(interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int, message: typing.Optional[str], confirm: bool = True):
     if not await check_command_permissions(interaction):
         return
     
@@ -568,11 +581,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
         should_finish = False
 
         if not confirm:
-            targets.add_trigger({
-                "api_name": trigger["api_name"],
-                "target": target,
-                "delay": delay,
-            })
+            targets.add_trigger(compose_trigger(trigger["api_name"], target=util.format_nation_or_region(target), delay=delay, message=message))
             targets.sort_triggers(everblaze_cursor)
 
             guilds[interaction.guild.id].mutually_exclusive_targets.add(target)
@@ -593,11 +602,7 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
                 view.stop()
                 return
 
-            targets.add_trigger({
-                "api_name": trigger["api_name"],
-                "target": target,
-                "delay": delay,
-            })
+            targets.add_trigger(compose_trigger(trigger["api_name"], target=util.format_nation_or_region(target), delay=delay, message=message))
             targets.sort_triggers(everblaze_cursor)
 
             guilds[interaction.guild.id].mutually_exclusive_targets.add(target)

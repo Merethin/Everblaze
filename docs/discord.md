@@ -10,11 +10,13 @@ When added to any server, the server owner must run the following command first,
 
 ## Command reference
 
-```/add <trigger>```
+```/add <trigger> (message)```
 
 Add a region to the trigger list.
 
 A message/ping will be sent when the region updates. If you want a message to be sent at a delay before the region updates, you're looking for `/snipe` instead.
+
+To customize the message sent alongside the ping when the region updates, set the `message` parameter.
 
 ```/addch <setup_role> <ping_role> <invisible>```
 
@@ -32,7 +34,7 @@ Running `/select` in this channel will skip over targets set in other channels (
 
 Removes channel-specific configuration and trigger lists and makes all Everblaze commands run in this channel affect the server-wide trigger list instead.
 
-```/add_target <target> <trigger> <delay>```
+```/add_target <target> <trigger> <delay> (message)```
 
 This command is to import targets from tools like QuickDraw manually, as the Discord bot does not support importing trigger lists/raidfiles.
 
@@ -48,6 +50,8 @@ The command should be:
 The delay is **not** checked. Whenever the trigger region updates, Everblaze will send out a ping saying the target region is about to update. If the delay is wrongly set, that's your problem.
 
 To find suitable triggers for a target, use the `/snipe` command instead.
+
+To customize the message sent alongside the ping when the region updates, set the `message` parameter.
 
 ```/next (visible: True)```
 
@@ -89,7 +93,7 @@ It is recommended to run this command before or after update, but it is not reco
 
 Clear all triggers in a specific channel.
 
-```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance> (confirm: True)```
+```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance> (confirm: True) (message)```
 
 Arguably one of the most powerful commands in Everblaze. Its functionality is similar to that of QuickDraw, that is, you give it the update to pick triggers for (major or minor), the endorsements you will have on the point, the minimum time to switch between targets, and the desired trigger time, and it will give you unpassworded, executive-delegacy regions to pick from. The targets you pick will automatically be added to the trigger list.
 
@@ -109,11 +113,13 @@ Arguably one of the most powerful commands in Everblaze. Its functionality is si
 
 When running `/select` correctly, Everblaze will present you with a link to a region. If you want to add that region to your target list, click `Accept Target`. If, for any reason, you don't want to include that region, click `Find Another`. Do this as many times as you want until you have enough, and then click `Finish`. All the triggers and targets you selected will be added to the trigger list.
 
+To customize the message sent alongside the pings when the regions update, set the `message` parameter. This is not supported individually (setting a different message per region selected) as of now.
+
 ```/skip```
 
 Remove the next region to update from the trigger list.
 
-```/snipe <target> <update> <ideal_delay> <early_tolerance> <late_tolerance>```
+```/snipe <target> <update> <ideal_delay> <early_tolerance> <late_tolerance> (message)```
 
 Given a specific target region, find a trigger that updates a certain amount of time before it, and add it to the trigger list.
 
@@ -128,6 +134,8 @@ All other parameters work the same way as in `/select`:
 `<early_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much earlier can it go? That is, if your ideal delay is 6 seconds, and your early tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 7-second triggers if it can't find one.
 
 `<late_tolerance>`: if Everblaze can't find a trigger `ideal_delay` seconds before a target, how much later can it go? That is, if your ideal delay is 6 seconds, and your late tolerance is 1 second, Everblaze will try to find 6-second triggers but may give you 5-second triggers if it can't find one.
+
+To customize the message sent alongside the ping when the region updates, set the `message` parameter.
 
 ```/tag <update> <point_endos> <switch_time> <min_delay>```
 
