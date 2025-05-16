@@ -1012,7 +1012,7 @@ def main() -> None:
     parser.add_argument("-s", "--self-reset", type=check_positive)
     args = parser.parse_args()
 
-    self_reset_delay = parser.self_reset
+    self_reset_delay = args.self_reset
 
     if len(args.nation_name) != 0:
         nation_name = args.nation_name
