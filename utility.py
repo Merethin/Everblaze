@@ -1,33 +1,7 @@
 # utility.py - Utility functions for the entire Everblaze suite of tools
 # Authored by Merethin, licensed under the BSD-2-Clause license.
-# This file makes 1 (one) API call (in check_if_nation_exists()) - to check if a user's nation exists.
-# Additional API calls are imported from db.py, and used in bootstrap().
 
-import threading, time, typing, sqlite3, os, sseclient, re, requests, db
-
-next_api_hit: float = 0 # Next time we can hit the API (in UNIX time). Starts at 0, so we can use it immediately the first time.
-next_api_hit_lock = threading.Lock()
-
-# Call this before making any API request to NationStates. It will make sure all requests are 
-# at least {delay} seconds apart, even if the requests are spread between multiple threads.
-def ensure_api_rate_limit(delay: float):
-    global next_api_hit
-    global next_api_hit_lock
-
-    while True:
-        next_api_hit_time: float = 0
-        current_time: float = 0
-
-        with next_api_hit_lock:
-            next_api_hit_time = next_api_hit # fetch a copy of the value so that we can use it outside the lock
-            current_time = time.time()
-            if(next_api_hit_time < current_time):
-                next_api_hit = current_time + delay # update the value behind the lock
-                print(f"Next API hit: {next_api_hit} seconds UNIX time, currently from {threading.current_thread().name}") # debugging
-                return
-
-        time_to_wait = (next_api_hit_time - current_time) + (0.05) # for good measure
-        time.sleep(time_to_wait)
+import typing, sqlite3, os, re, db, sans
 
 # Format a NationStates nation name to be compatible with the API.
 def format_nation_or_region(name: str) -> str:
@@ -36,7 +10,7 @@ def format_nation_or_region(name: str) -> str:
 # Convert a row from a database query to a dictionary with well-known keys.
 def format_database_data(data) -> typing.Dict:
     output = {}
-    # Database row layout: (canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password, wfe, embassies)
+    # Database row layout: (canon_name, api_name, update_index, seconds_major, seconds_minor, delendos, executive, password, governorless, wfe, embassies)
     output["canon_name"] = data[0]
     output["api_name"] = data[1]
     output["update_index"] = data[2]
@@ -45,8 +19,9 @@ def format_database_data(data) -> typing.Dict:
     output["delendos"] = data[5]
     output["executive"] = data[6]
     output["password"] = data[7]
-    output["wfe"] = data[8]
-    output["embassies"] = data[9]
+    output["governorless"] = data[8]
+    output["wfe"] = data[9]
+    output["embassies"] = data[10]
 
     return output
 
@@ -89,22 +64,53 @@ def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: int, minor: bool
             start = delay - early_tolerance
             end = delay + late_tolerance
 
-            for time in range(start, end + 1):
-                if time == delay:
-                    continue
+            early_region = None
+            for time in range(delay - 1, start - 1, -1):
+                early_region = find_region_updating_at_time(cursor, time, minor, 0, 0)
+                if early_region is not None:
+                    break
 
-                # FIXME: optimize this so that the result is the closest it can be to the ideal delay?
-                result = find_region_updating_at_time(cursor, time, minor, 0, 0)
-                if result is not None:
-                    return result
+            late_region = None
+            for time in range(delay + 1, end + 1):
+                late_region = find_region_updating_at_time(cursor, time, minor, 0, 0)
+                if late_region is not None:
+                    break
+
+            if late_region is None: # If the other is None, we just return None.
+                return early_region
+            
+            if early_region is None: # Can't return None, already checked
+                return late_region
+            
+            # Check which one is better
+            early_time = 0
+            late_time = 0
+
+            if minor:
+                early_time = early_region["seconds_minor"]
+                late_time = late_region["seconds_minor"]
+            else:
+                early_time = early_region["seconds_major"]
+                late_time = late_region["seconds_major"]
+
+            early_delay = delay - early_time
+            late_delay = late_time - delay
+
+            if early_delay < late_delay:
+                return early_region
+            
+            return late_region
                 
         return None
     
     return format_database_data(data)
 
 # Return a list of all regions that have less endorsements than a point nation and have an executive delegacy.
-def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int, start: int = -1) -> typing.List[typing.Dict]:
-    cursor.execute("SELECT * FROM regions WHERE executive = 1 AND password = 0 AND delendos < ? AND update_index > ?", [point_endos, start])
+def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int, start: int = -1, require_governorless: bool = False) -> typing.List[typing.Dict]:
+    if require_governorless:
+        cursor.execute("SELECT * FROM regions WHERE executive = 1 AND password = 0 AND governorless = 1 AND delendos < ? AND update_index > ?", [point_endos, start])
+    else:
+        cursor.execute("SELECT * FROM regions WHERE executive = 1 AND password = 0 AND delendos < ? AND update_index > ?", [point_endos, start])
     data = cursor.fetchall()
 
     output = []
@@ -209,29 +215,23 @@ class TriggerList:
 # If needed, generate the region database.
 # If regenerate_db is set to True, it will always be generated. 
 # Otherwise, it will only be generated if there isn't already one.
-def bootstrap(nation: str, regenerate_db: bool):
+def bootstrap(regenerate_db: bool):
     if(regenerate_db or not os.path.exists("regions.db")):
-        db.generate_database(nation)
+        db.generate_database()
 
-UPDATE_REGEX = re.compile(r"%%([a-z0-9_\-]+)%% updated\.")
-
-def connect_sse(url: str, headers: typing.Dict) -> sseclient.SSEClient:
-    try:
-        return sseclient.SSEClient(url, headers=headers)
-    except requests.HTTPError as e:
-        if e.response.status_code == 429: # API rate limit
-            retry_after = int(e.response.headers["Retry-After"])
-            time.sleep(retry_after)
-            return connect_sse(url, headers)
-        else:
-            raise e
+EVENTS: dict[str, re.Pattern] = {
+    "update": re.compile(r"%%([a-z0-9_\-]+)%% updated\."),
+    "endo": re.compile(r"@@([a-z0-9_\-]+)@@ endorsed @@([a-z0-9_\-]+)@@"),
+    "unendo": re.compile(r"@@([a-z0-9_\-]+)@@ withdrew its endorsement from @@([a-z0-9_\-]+)@@"),
+    "resign": re.compile(r"@@([a-z0-9_\-]+)@@ resigned from the World Assembly"),
+    "newdel": re.compile(r"@@([a-z0-9_\-]+)@@ became WA Delegate of %%([a-z0-9_\-]+)%%"),
+    "seizedel": re.compile(r"@@([a-z0-9_\-]+)@@ seized the position of %%([a-z0-9_\-]+)%% WA Delegate from @@([a-z0-9_\-]+)@@"),
+}
         
 def check_if_nation_exists(nation: str) -> bool:
-    url = f"https://www.nationstates.net/cgi-bin/api.cgi?nation={format_nation_or_region(nation)}&q=name"
-    headers = {'User-Agent': f"Everblaze by Merethin, used by {nation}"}
+    query = sans.Nation(format_nation_or_region(nation), "name")
 
-    ensure_api_rate_limit(0.7)
-    response = requests.get(url, headers=headers)
+    response = sans.get(query)
     if response.status_code == 200:
         return True
     elif response.status_code == 404:

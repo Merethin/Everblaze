@@ -1,23 +1,20 @@
 # tui.py - Interactive terminal triggering tool
 # Authored by Merethin, licensed under the BSD-2-Clause license.
-# The only API calls made by this file are imported from db.py and utility.py, through bootstrap() and check_if_nation_exists().
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, Input, RichLog
 from textual import on, work
 from textual.message import Message
-from textual.worker import get_current_worker
-import re, argparse, sqlite3, typing, json, sys
+import re, argparse, sqlite3, typing, sys, sans, asyncio
 import utility as util
 
 # Global variables.
 targets = util.TriggerList() # The list of targets to watch for updates (can be modified at runtime).
 cursor: typing.Optional[sqlite3.Cursor] = None # Database cursor
-nation_name: str = "" # The main nation of the player using this script
 
 # Input field to run commands.
-# Currently, these are the three supported commands:
+# Currently, these are the four supported commands:
 #   add region_name - adds a region to the trigger list
 #   remove region_name - manually removes a region from the trigger list, without waiting for it to update
 #   snipe target;update;delay;early_tolerance;late_tolerance - finds a trigger for a specified region
@@ -57,7 +54,7 @@ class CommandInput(Input):
         if command[0] == "add" or command[0] == "+":
             self.app.post_message(self.AddTarget(util.format_nation_or_region(command[1])))
         if command[0] == "snipe":
-            match = re.match("([a-zA-Z0-9_\- ]+);(minor|major);([0-9]+)(s|m);([0-9]+);([0-9]+)", command[1])
+            match = re.match(r"([a-zA-Z0-9_\- ]+);(minor|major);([0-9]+)(s|m);([0-9]+);([0-9]+)", command[1])
             if match is not None:
                 groups = match.groups()
                 region_name = groups[0]
@@ -115,6 +112,9 @@ class OutputLog(RichLog):
         self.styles.width = "3fr"
         self.auto_scroll = True
         self.worker = self.update_listener() # Launch the client
+
+        loop = asyncio.get_event_loop()
+        loop.set_task_factory(asyncio.eager_task_factory)
         
         if len(targets) != 0:
             self.post_message(self.WriteLog("\u2e30 Ready! Waiting for targets."))
@@ -138,35 +138,21 @@ class OutputLog(RichLog):
         event.stop()
 
     # Update client/listener worker.
-    @work(thread=True)
-    def update_listener(self) -> None:
-        url = 'https://www.nationstates.net/api/admin/'
-        headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (TUI) by Merethin, used by {nation_name}"}
+    @work(name="update")
+    async def update_listener(self):
+        client = sans.AsyncClient()
+        async for event in sans.serversent_events(client, "admin"):
+            happening = event["str"]
 
-        client = util.connect_sse(url, headers)
+            # The happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
+            # and if so, retrieve the region name.
+            match = util.EVENTS["update"].match(happening)
+            if match is not None:
+                region_name = match.groups()[0]
 
-        self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(f"\u2e30 Connected to {url}."))
-        self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog(f"\u2e30 User Agent: '{headers["User-Agent"]}'"))
+                print(f"log: {region_name} updated!")
 
-        for event in client:
-            # We only notice this after a heartbeat arrives from the connection.
-            if get_current_worker().is_cancelled:
-                print("Cancelled thread, closing connection")
-                return
-            
-            if event.data: # If the event has no data it's a heartbeat. We do want to receive heartbeats however so that we can check for cancellation above.
-                data = json.loads(event.data)
-                happening = data["str"]
-
-                # The happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
-                # and if so, retrieve the region name.
-                match = util.UPDATE_REGEX.match(happening)
-                if match is not None:
-                    region_name = match.groups()[0]
-
-                    print(f"log: {region_name} updated!")
-
-                    self.app.post_message(TriggerApp.RegionUpdate(region_name))
+                self.app.post_message(TriggerApp.RegionUpdate(region_name))
 
 def display_trigger(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
@@ -339,16 +325,21 @@ if __name__ == "__main__":
     group.add_argument("--raidfile", default="")
     args = parser.parse_args()
 
+    nation_name = ""
+
     if len(args.nation_name) != 0:
         nation_name = args.nation_name
     else:
         nation_name = input("Please enter your main nation name: ")
 
+    user_agent = f"Everblaze (TUI) by Merethin, used by {nation_name}"
+    sans.set_agent(user_agent)
+
     if not util.check_if_nation_exists(nation_name):
         print(f"The nation {nation_name} does not exist. Try again.")
         sys.exit(1)
 
-    util.bootstrap(nation_name, args.regenerate_db)
+    util.bootstrap(args.regenerate_db)
 
     con = sqlite3.connect("regions.db")
     cursor = con.cursor()

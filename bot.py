@@ -1,14 +1,12 @@
 # bot.py - Versatile Discord bot for R/D triggering and tag raiding
 # Authored by Merethin, licensed under the BSD-2-Clause license.
-# The only API calls made by this file are imported from db.py and utility.py, through bootstrap() and check_if_nation_exists().
 
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, json, asyncio, typing, re, time, math, sys, sseclient, threading, errno, os
+import discord, sqlite3, argparse, asyncio, typing, re, time, math, sys, os, sans
 from discord.ext import commands
 import utility as util
 from pagination import Pagination
-from dataclasses import dataclass
-from socket import error as SocketError
+from dataclasses import dataclass, field
 
 # Stores information about a region update event, specifically the last one that happened.
 # It stores the update index of the region, the UNIX timestamp of when it updated, and the previously predicted minor and major update times for that region.
@@ -27,11 +25,15 @@ class TriggerChannel:
     invisible: bool # Whether configuration messages should be ephemeral.
     triggers: util.TriggerList # The trigger list for this channel.
     session: typing.Optional[typing.Awaitable[None]] = None # Currently running tag session, stored as an async coroutine.
+    point: typing.Optional[str] = None # Current point in a tag session
+    hits: list[tuple[str, str]] = field(default_factory=lambda: [])# Regions hit in a tag session: tuples of (region, delegate)
 
 # Stores settings, update data and global targets for a guild.
 @dataclass
 class Guild:
     setup_role: int # Role to set up trigger settings.
+    embassy_blacklist: set[str] # Embassies to avoid targeting.
+    wfe_blacklist: set[str] # WFE words/phrases to avoid targeting.
     mutually_exclusive_targets: set # Targets shared across channels, so that one team doesn't inadvertently interfere with the other.
     last_update: typing.Optional[LastUpdate] # Last update information.
     channels: dict[int, TriggerChannel] # Configured channels.
@@ -43,7 +45,6 @@ everblaze_con: typing.Optional[sqlite3.Connection] = None # Everblaze region dat
 everblaze_cursor: typing.Optional[sqlite3.Cursor] = None # Everblaze region database cursor
 bot_con: typing.Optional[sqlite3.Connection] = None # Connection to the bot database
 bot_cursor: typing.Optional[sqlite3.Cursor] = None # Bot database cursor
-nation_name: str = "" # The main nation of the player using this script
 
 region_count: int = 0 # The number of regions contained in the database.
 
@@ -56,9 +57,6 @@ intents: discord.Intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Used to cancel the SSE thread.
-sse_cancel_event = threading.Event()
-
 bot = commands.Bot(command_prefix='%', intents=intents)
 
 @bot.event
@@ -68,13 +66,16 @@ async def on_ready():
 
     assert bot_cursor
 
+    loop = asyncio.get_event_loop()
+    loop.set_task_factory(asyncio.eager_task_factory)
+
     # Load guild data from the database
     for guild in bot.guilds:
         bot_cursor.execute("SELECT * FROM guilds WHERE guild_id = ?", [guild.id])
         data = bot_cursor.fetchone()
 
         if data is not None:
-            guilds[guild.id] = Guild(data[1], set(), None, {})
+            guilds[guild.id] = Guild(data[1], set([s for s in data[2].split(',') if s.strip() != '']), set([s for s in data[3].split(';') if s.strip() != '']), set(), None, {})
 
     bot_cursor.execute("SELECT * FROM channels")
     data = bot_cursor.fetchall()
@@ -90,51 +91,14 @@ async def on_ready():
     except Exception as e:
         print(f"Error syncing commands: {e}")
 
-    url = 'https://www.nationstates.net/api/admin+endo+member/'
-    headers = {'Accept': 'text/event-stream', 'User-Agent': f"Everblaze (Discord bot) by Merethin, used by {nation_name}"}
-
-    # Connect to the SSE feed for: update events, endorsement events, and WA resignation events.
-    util.ensure_api_rate_limit(0.7)
-    client = util.connect_sse(url, headers)
-
-    print(f"Connected to {url}.")
-    print(f"User Agent: '{headers["User-Agent"]}'")
-
-    # Flood control
-    first_reset: float | None = None
-    resets: int = 0
-
-    while True:
-        # Listen to SSE events on loop.
-        response = await asyncio.to_thread(sse_listener, client, sse_cancel_event)
+    client = sans.AsyncClient()
+    async for event in sans.serversent_events(client, "admin", "endo", "member"):
+        response = parse_sse_event(event)
 
         if response is None:
-            sys.exit(0)
+            continue
             
         (event, data) = response
-
-        if event == "disconnect":
-            # Disconnected, try to reconnect
-            if first_reset is None:
-                first_reset = time.time()
-
-            if (time.time() - first_reset) > 600:
-                first_reset = time.time()
-                resets = 1 # First reset in this time window
-            else:
-                resets += 1 # One more reset in this time window
-
-            if resets >= 5:
-                print("Connection reset 5 or more times in less than 10 minutes. Shutting down to prevent flooding requests...")
-                sys.exit(1)
-
-            print("Connection to NationStates reset, reconnecting...")
-
-            util.ensure_api_rate_limit(0.7)
-            client = util.connect_sse(url, headers)
-
-            print(f"Connected to {url}.")
-            continue
 
         bot.dispatch(event, data)
 
@@ -194,13 +158,20 @@ async def config(interaction: discord.Interaction, setup_role: discord.Role):
     
     assert bot_cursor
     assert bot_con
+
+    embassy_blacklist = ""
+    wfe_blacklist = ""
+    if interaction.guild.id in guilds.keys():
+        guild = guilds[interaction.guild.id]
+        embassy_blacklist = ",".join(guild.embassy_blacklist)
+        wfe_blacklist = ";".join(guild.wfe_blacklist)
     
-    data = (interaction.guild.id, setup_role.id)
-    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?)", data)
+    data = (interaction.guild.id, setup_role.id, embassy_blacklist, wfe_blacklist)
+    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
     bot_con.commit()
 
     if interaction.guild.id not in guilds.keys():
-        guilds[interaction.guild.id] = Guild(setup_role.id, set(), None, {})
+        guilds[interaction.guild.id] = Guild(setup_role.id, set(), set(), set(), None, {})
     else:
         guilds[interaction.guild.id].setup_role = setup_role.id
         guilds[interaction.guild.id].last_update = None
@@ -299,16 +270,16 @@ def display_trigger(trigger: typing.Dict) -> str:
         message_shown = f" - message: \"{trigger["message"]}\""
 
     if "target" not in trigger.keys():
-        return f"https://www.nationstates.net/region={trigger["api_name"]} - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
+        return f"[{trigger["api_name"]}](https://www.nationstates.net/region={trigger["api_name"]}) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
     
-    return f"https://www.nationstates.net/region={trigger["target"]} ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
+    return f"[{trigger["target"]}](https://www.nationstates.net/region={trigger["target"]}) ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
 
 # Format a string with a link to a trigger.
 def display_trigger_simple(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
-        return f"trigger: https://www.nationstates.net/region={trigger["api_name"]}"
+        return f"trigger: [{trigger["api_name"]}](https://www.nationstates.net/region={trigger["api_name"]})"
     
-    return f"target: https://www.nationstates.net/region={trigger["target"]}"
+    return f"target: [{trigger["target"]}](https://www.nationstates.net/region={trigger["target"]})"
 
 # Format a region update happening given a trigger that has just updated.
 def format_update_log(trigger: typing.Dict) -> str:
@@ -333,6 +304,118 @@ async def add(interaction: discord.Interaction, trigger: str, message: typing.Op
     targets.sort_triggers(everblaze_cursor)
 
     await interaction.response.send_message(f"Added trigger {trigger}. Run /triggers to see a list of active triggers.", ephemeral=should_be_ephemeral(interaction))
+
+@bot.tree.command(description="Add/remove a region to/from the embassy blacklist.")
+async def embassyblacklist(interaction: discord.Interaction, region: str, remove: bool):
+    if interaction.guild.id not in guilds.keys():
+        await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
+        return
+    
+    if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
+        await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
+        return
+
+    region = util.format_nation_or_region(region)
+    
+    assert everblaze_cursor
+
+    if remove:
+        guilds[interaction.guild.id].embassy_blacklist.discard(region)
+        await interaction.response.send_message(f"Removed {region} from the embassy blacklist.", ephemeral=True)
+    else:
+        guilds[interaction.guild.id].embassy_blacklist.add(region)
+        await interaction.response.send_message(f"Added {region} to the embassy blacklist.", ephemeral=True)
+
+    guild = guilds[interaction.guild.id]
+    
+    data = (interaction.guild.id, guild.setup_role, ",".join(guild.embassy_blacklist), ";".join(guild.wfe_blacklist))
+    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
+    bot_con.commit()
+
+@bot.tree.command(description="Add/remove a word or sentence to/from the WFE blacklist.")
+async def wfeblacklist(interaction: discord.Interaction, word: str, remove: bool):
+    if interaction.guild.id not in guilds.keys():
+        await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
+        return
+    
+    if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
+        await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
+        return
+
+    word = word.lower()
+    
+    assert everblaze_cursor
+
+    if remove:
+        guilds[interaction.guild.id].wfe_blacklist.discard(word)
+        await interaction.response.send_message(f"Removed {word} from the WFE blacklist.", ephemeral=True)
+    else:
+        guilds[interaction.guild.id].wfe_blacklist.add(word)
+        await interaction.response.send_message(f"Added {word} to the WFE blacklist.", ephemeral=True)
+
+    guild = guilds[interaction.guild.id]
+    
+    data = (interaction.guild.id, guild.setup_role, ",".join(guild.embassy_blacklist), ";".join(guild.wfe_blacklist))
+    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
+    bot_con.commit()
+
+@bot.tree.command(description="List the current blacklist.")
+async def blacklist(interaction: discord.Interaction):
+    if interaction.guild.id not in guilds.keys():
+        await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
+        return
+    
+    if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
+        await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
+        return
+
+    guild = guilds[interaction.guild.id]
+
+    lines = []
+    lines.append("**Embassy Blacklist**")
+
+    for embassy in guild.embassy_blacklist:
+        lines.append(f"[{embassy}](https://www.nationstates.net/region={embassy})")
+    
+    lines.append("")
+    lines.append("**WFE Blacklist**")
+
+    for word in guild.wfe_blacklist:
+        lines.append(f"'{word}'")
+
+    ELEMENTS_PER_PAGE = 10
+
+    async def get_page(page: int):
+        emb = discord.Embed(title="Blacklist", description="")
+        offset = (page-1) * ELEMENTS_PER_PAGE
+        for line in lines[offset:offset+ELEMENTS_PER_PAGE]:
+            emb.description += f"{line}\n"
+        n = Pagination.compute_total_pages(len(lines), ELEMENTS_PER_PAGE)
+        emb.set_footer(text=f"Page {page} of {n}")
+        return emb, n
+
+    await Pagination(interaction, get_page).navigate()
+    return
+
+@bot.tree.command(description="Clear the server embassy and WFE blacklists.")
+async def clearblacklist(interaction: discord.Interaction):
+    if interaction.guild.id not in guilds.keys():
+        await interaction.response.send_message("This server is not configured. Tell the owner to run /config first.", ephemeral=True)
+        return
+    
+    if interaction.user.get_role(guilds[interaction.guild.id].setup_role) is None:
+        await interaction.response.send_message("You are not allowed to use this command!", ephemeral=True)
+        return
+
+    guild = guilds[interaction.guild.id]
+    guild.embassy_blacklist = set()
+    guild.wfe_blacklist = set()
+
+    data = (interaction.guild.id, guild.setup_role, ",".join(guild.embassy_blacklist), ";".join(guild.wfe_blacklist))
+    bot_cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
+    bot_con.commit()
+
+    await interaction.response.send_message(f"Cleared the server blacklist.", ephemeral=True)
 
 @bot.tree.command(description="Add a new target and associated trigger.")
 async def add_target(interaction: discord.Interaction, target: str, trigger: str, delay: int, message: typing.Optional[str]):
@@ -429,6 +512,42 @@ async def triggers(interaction: discord.Interaction):
     list = "\n".join([display_trigger(t) for t in targets.triggers])
     await interaction.response.send_message(list, ephemeral=should_be_ephemeral(interaction))
 
+@bot.tree.command(description="List regions hit during a tag run.")
+async def hits(interaction: discord.Interaction, all_channels: bool = False):
+    if not await check_command_permissions(interaction):
+        return
+
+    hit_list = []
+    
+    if all_channels:
+        for _, channel in guilds[interaction.guild.id].channels.items():
+            hit_list += channel.hits
+    else:
+        channel = get_channel_to_edit(interaction)
+        hit_list += channel.hits
+
+    if(len(hit_list) == 0):
+        await interaction.response.send_message(f"No regions hit!", ephemeral=should_be_ephemeral(interaction))
+        return
+
+    ELEMENTS_PER_PAGE = 10
+
+    if(len(channel.hits) > ELEMENTS_PER_PAGE):
+        async def get_page(page: int):
+            emb = discord.Embed(title="Targets Hit", description="")
+            offset = (page-1) * ELEMENTS_PER_PAGE
+            for (region, point) in hit_list[offset:offset+ELEMENTS_PER_PAGE]:
+                emb.description += f"[{region}](https://www.nationstates.net/region={region}) hit by {point}\n"
+            n = Pagination.compute_total_pages(len(hit_list), ELEMENTS_PER_PAGE)
+            emb.set_footer(text=f"Page {page} of {n}")
+            return emb, n
+
+        await Pagination(interaction, get_page).navigate()
+        return
+
+    list = "\n".join([f"[{region}](https://www.nationstates.net/region={region}) hit by {point}" for (region, point) in hit_list])
+    await interaction.response.send_message(list, ephemeral=should_be_ephemeral(interaction))
+
 @bot.tree.command(description="Display the next region to update.")
 async def next(interaction: discord.Interaction, visible: bool = True):
     if not await check_command_permissions(interaction):
@@ -518,6 +637,17 @@ class BaseRegionView(discord.ui.View):
         # update the interaction attribute when a valid interaction is received
         self.interaction = interaction
         return True
+    
+def check_blacklist(guild: Guild, region: dict) -> bool:
+    embassies: list[str] = region["embassies"].split(",")
+    for embassy in guild.embassy_blacklist:
+        if embassy in embassies:
+            return True
+
+    wfe: str = region["wfe"].lower()
+    for entry in guild.wfe_blacklist:
+        if entry in wfe:
+            return True
 
 @bot.tree.command(description="Find and select targets with no password and an executive delegate.")
 async def select(interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int, message: typing.Optional[str], confirm: bool = True):
@@ -530,7 +660,9 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
     
     minor = util.is_minor(update)
 
-    last_update = guilds[interaction.guild.id].last_update
+    guild = guilds[interaction.guild.id]
+
+    last_update = guild.last_update
 
     start = -1
     if last_update is not None:
@@ -560,6 +692,9 @@ async def select(interaction: discord.Interaction, update: str, point_endos: int
             update_time = region["seconds_major"]
 
         if (update_time - last_switch_time) < min_switch_time:
+            continue
+
+        if check_blacklist(guild, region):
             continue
 
         target = region["api_name"]
@@ -675,10 +810,9 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
 
     nation = ""
 
-    guilds[interaction.guild.id].ongoing_tags += 1
+    guild = guilds[interaction.guild.id]
 
-    wfe_blacklist: set[str] = set()
-    embassy_blacklist: set[str] = set()
+    guild.ongoing_tags += 1
 
     while True:
         op = await bot.wait_for(
@@ -687,15 +821,9 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
             and (x.content.lower().startswith("t")
             or x.content.lower() == "quit"
             or x.content.lower() == "miss"
-            or x.content.lower() == "lemb"
-            or x.content.lower() == "lwfe"
             or x.content.lower().startswith("endos")
             or x.content.lower().startswith("delay")
-            or x.content.lower().startswith("switch")
-            or x.content.lower().startswith("blwfe")
-            or x.content.lower().startswith("wlwfe")
-            or x.content.lower().startswith("blemb")
-            or x.content.lower().startswith("wlemb")),
+            or x.content.lower().startswith("switch")),
             timeout=None,
         )
 
@@ -706,6 +834,7 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
             match = re.match(r"t[\s]+http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_\- ]+)", op.content.lower())
             if match is not None:
                 nation = util.format_nation_or_region(match.groups()[0])
+                get_channel_to_edit(interaction).point = nation
             else:
                 continue
         elif op.content.lower() == "miss":
@@ -716,6 +845,7 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
                 await interaction.followup.send(f"Quitting the tag session.")
                 guilds[interaction.guild.id].ongoing_tags -= 1
                 guilds[interaction.guild.id].channels[interaction.channel.id].session = None
+                get_channel_to_edit(interaction).point = None
                 return
             elif op.content.lower().startswith("endos"):
                 match = re.match(r"endos[\s]+([0-9]+)", op.content.lower())
@@ -732,34 +862,6 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
                 if match is not None:
                     switch_time = int(match.groups()[0])
                     await interaction.followup.send(f"Switch time changed to {switch_time}s")
-            elif op.content.lower().startswith("blwfe"):
-                match = re.match(r"blwfe[\s]+([0-9a-z_ ]+)", op.content.lower())
-                if match is not None:
-                    text = match.groups()[0]
-                    wfe_blacklist.add(embassy)
-                    await interaction.followup.send(f"Added \"{text}\" to the WFE blacklist")
-            elif op.content.lower().startswith("wlwfe"):
-                match = re.match(r"wlwfe[\s]+([0-9a-z_ ]+)", op.content.lower())
-                if match is not None:
-                    text = match.groups()[0]
-                    wfe_blacklist.discard(embassy)
-                    await interaction.followup.send(f"Removed \"{text}\" from the WFE blacklist, if it was there")
-            elif op.content.lower().startswith("blemb"):
-                match = re.match(r"blemb[\s]+([0-9a-z_ ]+)", op.content.lower())
-                if match is not None:
-                    embassy = util.format_nation_or_region(match.groups()[0])
-                    embassy_blacklist.add(embassy)
-                    await interaction.followup.send(f"Added {embassy} to the embassy blacklist")
-            elif op.content.lower().startswith("wlemb"):
-                match = re.match(r"wlemb[\s]+([0-9a-z_ ]+)", op.content.lower())
-                if match is not None:
-                    embassy = util.format_nation_or_region(match.groups()[0])
-                    embassy_blacklist.discard(embassy)
-                    await interaction.followup.send(f"Removed {embassy} from the embassy blacklist, if it was there")
-            if op.content.lower() == "lemb":
-                await interaction.followup.send(f"Embassy blacklist: {",".join(embassy_blacklist)}")
-            if op.content.lower() == "lwfe":
-                await interaction.followup.send(f"WFE blacklist: {",".join(wfe_blacklist)}")
             continue
 
         message: typing.Optional[discord.WebhookMessage] = None
@@ -772,6 +874,7 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
             return target == nation
         
         while endos < point_endos:
+            task = None
             (event, _) = await bot.wait_for(
                 "wa",
                 check=match,
@@ -780,12 +883,16 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
             if event == "endo":
                 endos += 1
                 if message is not None:
-                    await message.edit(content=f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
+                    if task is not None:
+                        task.cancel()
+                    task = asyncio.create_task(message.edit(content=f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})"))
             elif event == "unendo":
-                await interaction.followup.send(f"{nation} has been unendorsed, canceling. Waiting for another command.")
+                asyncio.create_task(interaction.followup.send(f"{nation} has been unendorsed, canceling. Waiting for another command."))
+                get_channel_to_edit(interaction).point = None
                 break
             elif event == "resign":
-                await interaction.followup.send(f"{nation} has resigned from the WA, canceling. Waiting for another command.")
+                asyncio.create_task(interaction.followup.send(f"{nation} has resigned from the WA, canceling. Waiting for another command."))
+                get_channel_to_edit(interaction).point = None
                 break
         else:
             last_update = guilds[interaction.guild.id].last_update
@@ -819,15 +926,8 @@ async def run_tag_session(interaction: discord.Interaction, update: str, point_e
                 else:
                     update_time = region["seconds_major"]
 
-                embassies: list[str] = region["embassies"].split(",")
-                for embassy in embassy_blacklist:
-                    if embassy in embassies:
-                        continue
-
-                wfe: str = region["wfe"]
-                for entry in wfe_blacklist:
-                    if entry in wfe.lower():
-                        continue
+                if check_blacklist(guild, region):
+                    continue
 
                 # Large region is probably updating. Let's wait until it ends and then find a more reliable trigger/target.
                 while (update_time - target_update_time) > 2 or time_since_last_update > 1.5:
@@ -925,78 +1025,90 @@ async def on_region_update(event: typing.Tuple[str, int]):
     await asyncio.gather(*coroutines)
 
     if data["update_index"] == (region_count-1):
-        # Warzone Trinidad updated unless admins shuffle update order
-        if self_reset_delay is not None:
-            print("Starting self-reset timer...")
+        bot.dispatch("update_end")
 
-            await asyncio.sleep(self_reset_delay)
+@bot.event
+async def on_update_end():
+    # Warzone Trinidad updated unless admins shuffle update order
+    if self_reset_delay is not None:
+        print(f"[everblaze] starting self-reset timer... resetting in {self_reset_delay} seconds")
 
-            os.execl(*sys.argv)
-        
+        await asyncio.sleep(self_reset_delay)
 
-ENDO_REGEX = re.compile(r"@@([a-z0-9_\-]+)@@ endorsed @@([a-z0-9_\-]+)@@")
-UNENDO_REGEX = re.compile(r"@@([a-z0-9_\-]+)@@ withdrew its endorsement from @@([a-z0-9_\-]+)@@")
-RESIGN_REGEX = re.compile(r"@@([a-z0-9_\-]+)@@ resigned from the World Assembly")
+        print(f"[everblaze] self-resetting now - running {[sys.executable, *sys.argv]}")
 
-def sse_listener(client: sseclient.SSEClient, cancel_event: threading.Event) -> typing.Optional[typing.Tuple[str, typing.Tuple[str, int] | typing.Tuple[str, str]]]:
-    try:
-        for event in client:
-            # We only notice this after a heartbeat arrives from the connection.
-            if cancel_event.is_set():
-                print("Cancelled thread, closing connection")
-                return None
-            
-            if event.data: # If the event has no data it's a heartbeat. We do want to receive heartbeats however so that we can check for cancellation above.
-                data = json.loads(event.data)
-                happening = data["str"]
+        os.execl(sys.executable, *sys.argv)
 
-                # The update happening line is formatted like this: "%%region_name%% updated." We want to know if the happening matches this, 
-                # and if so, retrieve the region name.
-                match = util.UPDATE_REGEX.match(happening)
-                if match is not None:
-                    region_name = match.groups()[0]
+@bot.event
+async def on_delegate(event: typing.Tuple[str, int]):
+    (point, region) = event
+    
+    for i, server in guilds.items():
+        guild = bot.get_guild(i)
 
-                    print(f"log: {region_name} updated!")
+        for j, channel in server.channels.items():
+            if channel.point == point:
+                role = guild.get_role(channel.ping_role)
+                guild.get_channel(j).send(f"{role.mention} {region} hit!")
+                channel.hits.append((region, point))
+                channel.point = None
 
-                    time = data["time"]
-                    assert type(time) == int
-                    return ("region_update", (region_name, time))
-                
-                # The endorsement happening line is formatted like this: "@@endorser@@ endorsed @@endorsed@@" We want to know if the happening matches this, 
-                # and if so, retrieve the endorsed nation's name.
-                match = ENDO_REGEX.match(happening)
-                if match is not None:
-                    target = match.groups()[1]
+def parse_sse_event(data: dict) -> typing.Optional[typing.Tuple[str, typing.Tuple[str, int] | typing.Tuple[str, str]]]:
+    happening = data["str"]
 
-                    print(f"log: {target} was endorsed!")
+    match = util.EVENTS["update"].match(happening)
+    if match is not None:
+        region_name = match.groups()[0]
 
-                    return ("wa", ("endo", target))
-                
-                # The unendorsement happening line is formatted like this: "@@endorser@@ withdrew its endorsement from @@endorsed@@" 
-                # We want to know if the happening matches this, and if so, retrieve the unendorsed nation's name.
-                match = UNENDO_REGEX.match(happening)
-                if match is not None:
-                    target = match.groups()[1]
+        print(f"[update] {region_name} updated")
 
-                    print(f"log: {target} was unendorsed!")
+        time = math.floor(data["time"].timestamp())
+        assert type(time) == int
+        return ("region_update", (region_name, time))
+    
+    match = util.EVENTS["endo"].match(happening)
+    if match is not None:
+        target = match.groups()[1]
 
-                    return ("wa", ("unendo", target))
-                
-                # The WA resignation happening line is formatted like this: "@@nation@@ resigned from the World Assembly" 
-                # We want to know if the happening matches this, and if so, retrieve the nation's name.
-                match = RESIGN_REGEX.match(happening)
-                if match is not None:
-                    target = match.groups()[0]
+        print(f"[wa] {target} was endorsed")
 
-                    print(f"log: {target} resigned from the WA!")
+        return ("wa", ("endo", target))
+    
+    match = util.EVENTS["unendo"].match(happening)
+    if match is not None:
+        target = match.groups()[1]
 
-                    return ("wa", ("resign", target))
-                
-        return ("disconnect", ("unknown", "")) # SSE feed aborted/disconnected for some reason
-    except SocketError as e:
-        if e.errno != errno.ECONNRESET:
-            raise # Not disconnected by peer
-        return ("disconnect", ("peer", "")) # Socket disconnected by peer
+        print(f"[wa] {target} was unendorsed")
+
+        return ("wa", ("unendo", target))
+    
+    match = util.EVENTS["resign"].match(happening)
+    if match is not None:
+        target = match.groups()[0]
+
+        print(f"[wa] {target} resigned from the WA")
+
+        return ("wa", ("resign", target))
+    
+    match = util.EVENTS["newdel"].match(happening)
+    if match is not None:
+        point = match.groups()[0]
+        target = match.groups()[1]
+
+        print(f"[wa] {point} became delegate of {target}")
+
+        return ("delegate", (point, target))
+    
+    match = util.EVENTS["seizedel"].match(happening)
+    if match is not None:
+        point = match.groups()[0]
+        target = match.groups()[1]
+
+        print(f"[wa] {point} became delegate of {target}")
+
+        return ("delegate", (point, target))
+    
+    return None
 
 def check_positive(value):
     ivalue = int(value)
@@ -1005,7 +1117,7 @@ def check_positive(value):
     return ivalue
 
 def main() -> None:
-    global everblaze_con, everblaze_cursor, bot_con, bot_cursor, is_cancelled, nation_name, region_count, self_reset_delay
+    global everblaze_con, everblaze_cursor, bot_con, bot_cursor, is_cancelled, region_count, self_reset_delay
     parser = argparse.ArgumentParser(prog="everblaze-bot", description="Everblaze Discord bot for NationStates R/D")
     parser.add_argument("-n", "--nation-name", default="")
     parser.add_argument("-r", '--regenerate-db', action='store_true')
@@ -1014,16 +1126,20 @@ def main() -> None:
 
     self_reset_delay = args.self_reset
 
+    nation_name = ""
     if len(args.nation_name) != 0:
         nation_name = args.nation_name
     else:
         nation_name = input("Please enter your main nation name: ")
 
+    user_agent = f"Everblaze (Discord bot) by Merethin, used by {nation_name}"
+    sans.set_agent(user_agent)
+
     if not util.check_if_nation_exists(nation_name):
         print(f"The nation {nation_name} does not exist. Try again.")
         sys.exit(1)
 
-    util.bootstrap(nation_name, args.regenerate_db)
+    util.bootstrap(args.regenerate_db)
 
     everblaze_con = sqlite3.connect("regions.db")
     everblaze_cursor = everblaze_con.cursor()
@@ -1038,7 +1154,7 @@ def main() -> None:
 
     if table_list == []:
         # Guild list doesn't exist, create it
-        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id)")
+        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id, embassy_blacklist, wfe_blacklist)")
         bot_cursor.execute("CREATE UNIQUE INDEX idx_guild_id ON guilds (guild_id);")
         bot_con.commit()
 
@@ -1052,8 +1168,6 @@ def main() -> None:
 
     bot.run(settings["TOKEN"])
 
-    print("Closing SSE thread...")
-    sse_cancel_event.set()
     sys.exit(0)
 
 if __name__ == "__main__":

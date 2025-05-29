@@ -8,19 +8,13 @@ When added to any server, the server owner must run the following command first,
 
 `@Setup Role`: everyone who has this role will be able to configure specific channels.
 
-## Command reference
+## Server-wide command reference
 
-```/add <trigger> (message)```
+All of these commands require the global `@Setup Role` set in `/config`.
 
-Add a region to the trigger list.
+### ```/addch <setup_role> <ping_role> <invisible>```
 
-A message/ping will be sent when the region updates. If you want a message to be sent at a delay before the region updates, you're looking for `/snipe` instead.
-
-To customize the message sent alongside the ping when the region updates, set the `message` parameter.
-
-```/addch <setup_role> <ping_role> <invisible>```
-
-Add or edit channel-specific configuration to a channel (requires the global `@Setup Role` set in `/config`).
+Add or edit channel-specific configuration to a channel.
 
 When a channel has channel-specific configuration, it will have its own trigger list, and commands run in that channel will edit that channel's trigger list. Members will need to have `<setup_role>` in order to edit and view this channel's trigger list, as well as start tag sessions.
 
@@ -30,11 +24,43 @@ Running `/select` in this channel will skip over targets set in other channels (
 
 `invisible`: If True, replies from Everblaze in this channel should only be visible to the person who ran the command, or if False, they will be visible to everyone in the channel. This does not apply to tag sessions (all their messages are visible).
 
-```/remch```
+### ```/remch```
 
 Removes channel-specific configuration and trigger lists and makes all Everblaze commands run in this channel affect the server-wide trigger list instead.
 
-```/add_target <target> <trigger> <delay> (message)```
+### ```/embassyblacklist <region> <remove>```
+
+If remove is `False`, adds a region to the server-wide embassy blacklist, and if `True`, removes it from the list.
+
+`/select` and `/tag` will skip over any regions that has embassies or requested/pending embassies with any region on the embassy blacklist.
+
+### ```/wfeblacklist <word> <remove>```
+
+If remove is `False`, adds a word (or sequence of words) to the server-wide WFE blacklist, and if `True`, removes it from the list.
+
+`/select` and `/tag` will skip over any regions whose WFE contains any given word/words (case-insensitive) on the WFE blacklist.
+
+### ```/blacklist```
+
+List the embassy and WFE blacklists.
+
+### ```/clearblacklist```
+
+Clear the embassy and WFE blacklists.
+
+## Channel-specific command reference
+
+These commands require the `<setup_role>` provided to `/addch` for the given channel.
+
+### ```/add <trigger> (message)```
+
+Add a region to the trigger list.
+
+A message/ping will be sent when the region updates. If you want a message to be sent at a delay before the region updates, you're looking for `/snipe` instead.
+
+To customize the message sent alongside the ping when the region updates, set the `message` parameter.
+
+### ```/add_target <target> <trigger> <delay> (message)```
 
 This command is to import targets from tools like QuickDraw manually, as the Discord bot does not support importing trigger lists/raidfiles.
 
@@ -53,7 +79,7 @@ To find suitable triggers for a target, use the `/snipe` command instead.
 
 To customize the message sent alongside the ping when the region updates, set the `message` parameter.
 
-```/next (visible: True)```
+### ```/next (visible: True)```
 
 Display a link to the next region set to update from the trigger list.
 
@@ -63,7 +89,7 @@ If you don't want that, run `/next visible: False` instead. (Note that if your s
 
 Triggers can be viewed by anyone with the `@Setup Role` at any time by running the `/triggers` command.
 
-```/remove <trigger>```
+### ```/remove <trigger>```
 
 Remove a region from the trigger list.
 
@@ -79,7 +105,7 @@ That is, to remove a trigger like this:
 
 Triggers are automatically removed when they update.
 
-```/reset```
+### ```/reset```
 
 Clear all triggers and reset internal update data.
 
@@ -89,11 +115,11 @@ This command cannot be used when there is a tag session (started with `/tag`) in
 
 It is recommended to run this command before or after update, but it is not recommended to run it in-between.
 
-```/clear```
+### ```/clear```
 
 Clear all triggers in a specific channel.
 
-```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance> (confirm: True) (message)```
+### ```/select <update> <point_endos> <min_switch_time> <ideal_delay> <early_tolerance> <late_tolerance> (confirm: True) (message)```
 
 Arguably one of the most powerful commands in Everblaze. Its functionality is similar to that of QuickDraw, that is, you give it the update to pick triggers for (major or minor), the endorsements you will have on the point, the minimum time to switch between targets, and the desired trigger time, and it will give you unpassworded, executive-delegacy regions to pick from. The targets you pick will automatically be added to the trigger list.
 
@@ -115,11 +141,11 @@ When running `/select` correctly, Everblaze will present you with a link to a re
 
 To customize the message sent alongside the pings when the regions update, set the `message` parameter. This is not supported individually (setting a different message per region selected) as of now.
 
-```/skip```
+### ```/skip```
 
 Remove the next region to update from the trigger list.
 
-```/snipe <target> <update> <ideal_delay> <early_tolerance> <late_tolerance> (message)```
+### ```/snipe <target> <update> <ideal_delay> <early_tolerance> <late_tolerance> (message)```
 
 Given a specific target region, find a trigger that updates a certain amount of time before it, and add it to the trigger list.
 
@@ -137,15 +163,15 @@ All other parameters work the same way as in `/select`:
 
 To customize the message sent alongside the ping when the region updates, set the `message` parameter.
 
-```/tag <update> <point_endos> <switch_time> <min_delay>```
+### ```/tag <update> <point_endos> <switch_time> <min_delay>```
 
 Starts a tag raiding session. In this session, Everblaze will repeatedly wait for someone to post a point nation, wait for all participants to endorse it, then dynamically choose a target according to the parameters above, and then send a link to the target for participants to immediately move to, until asked to quit.
 
-Parameters:
+**Parameters:**
 
 `<update>` must be "major" or "minor". If invalid, defaults to major.
 
-The following are parameters, but can also be changed mid-session.
+**The following are parameters, but can also be changed mid-session.**
 
 `<point_endos>` should be the number of endorsements you are expecting to have on the point nation. This is used both to find targets and to know when all participants have endorsed the point and a target can be posted.
 
@@ -153,7 +179,7 @@ The following are parameters, but can also be changed mid-session.
 
 `<min_delay>` should be the minimum/optimal trigger time in seconds.
 
-Commands (messages sent during a session):
+**Commands (messages sent during a session):**
 
 `t https://www.nationstates.net/nation=NATION_NAME`: Sets NATION_NAME as point, waits for all participants to endorse it, and then posts a target.
 
@@ -167,19 +193,9 @@ Commands (messages sent during a session):
 
 `delay DELAY`: Sets the optimal trigger time to DELAY seconds.
 
-`blemb EMBASSY`: Adds an embassy to the embassy blacklist.
+Everblaze will keep track of new delegates and will record when a point nation becomes the delegate of a region automatically. To view this list, run `/hits`.
 
-`wlemb EMBASSY`: Removes an embassy from the embassy blacklist.
-
-`blwfe SENTENCE`: Adds a sentence to the WFE blacklist. The sentence will be matched disregarding capitalization.
-
-`wlwfe SENTENCE`: Removes a sentence from the WFE blacklist. The sentence will be matched disregarding capitalization.
-
-`lemb`: List the current embassy blacklist.
-
-`lwfe`: List the current WFE blacklist.
-
-```/triggers```
+### ```/triggers```
 
 Display the current trigger list.
 
@@ -213,3 +229,7 @@ The ping from Everblaze will look like this:
 `@Ping Role <target> will update in <delay>s (<trigger> updated)!`
 
 Added with `/add_target`, `/select`, and `/snipe`.
+
+- Message triggers
+
+If any of the previous commands are given a `message` parameter, it will completely override the message sent when the regions update. The functionality remains the same.
