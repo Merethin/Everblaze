@@ -54,7 +54,7 @@ class TagManager(commands.Cog):
                 "region_update",
                 timeout=None,
             )
-            await interaction.followup.send(f"Started tag run for {update}. Please post the point and start endorsing.")
+            await interaction.channel.send(f"Started tag run for {update}. Please post the point and start endorsing.")
         else:
             await interaction.response.send_message(f"Started tag run for {update}. Please post the point and start endorsing.")
 
@@ -93,7 +93,7 @@ class TagManager(commands.Cog):
                 endos = point_endos + 1
             else:
                 if op.content.lower() == "quit":
-                    await interaction.followup.send(f"Quitting the tag session.")
+                    await interaction.channel.send(f"Quitting the tag session.")
                     run.session = None
                     run.point = None
                     cursor.close()
@@ -102,22 +102,22 @@ class TagManager(commands.Cog):
                     match = re.match(r"endos[\s]+([0-9]+)", op.content.lower())
                     if match is not None:
                         point_endos = int(match.groups()[0])
-                        await interaction.followup.send(f"Point endos changed to {point_endos}.")
+                        await interaction.channel.send(f"Point endos changed to {point_endos}.")
                 elif op.content.lower().startswith("delay"):
                     match = re.match(r"delay[\s]+([0-9]+)", op.content.lower())
                     if match is not None:
                         min_delay = int(match.groups()[0])
-                        await interaction.followup.send(f"Minimum delay changed to {min_delay}s (up to {min_delay+2}s)")
+                        await interaction.channel.send(f"Minimum delay changed to {min_delay}s (up to {min_delay+2}s)")
                 elif op.content.lower().startswith("switch"):
                     match = re.match(r"switch[\s]+([0-9]+)", op.content.lower())
                     if match is not None:
                         switch_time = int(match.groups()[0])
-                        await interaction.followup.send(f"Switch time changed to {switch_time}s")
+                        await interaction.channel.send(f"Switch time changed to {switch_time}s")
                 continue
 
             message: typing.Optional[discord.WebhookMessage] = None
             if endos < point_endos:
-                message = await interaction.followup.send(f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
+                message = await interaction.channel.send(f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
 
             def check_point(data: typing.Tuple[str, str]) -> bool:
                 nonlocal nation
@@ -138,11 +138,11 @@ class TagManager(commands.Cog):
                             task.cancel()
                         task = asyncio.create_task(message.edit(content=f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})"))
                 elif event == "unendo":
-                    asyncio.create_task(interaction.followup.send(f"{nation} has been unendorsed, canceling. Waiting for another command."))
+                    asyncio.create_task(interaction.channel.send(f"{nation} has been unendorsed, canceling. Waiting for another command."))
                     run.point = None
                     break
                 elif event == "resign":
-                    asyncio.create_task(interaction.followup.send(f"{nation} has resigned from the WA, canceling. Waiting for another command."))
+                    asyncio.create_task(interaction.channel.send(f"{nation} has resigned from the WA, canceling. Waiting for another command."))
                     run.point = None
                     break
             else:
@@ -216,13 +216,13 @@ class TagManager(commands.Cog):
                         text = "%" * 400
                         embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none)"
                         embed.set_footer(text=f"Move to target: {target}, estimated delay: {gap_delay + min_delay}s - {region["update_index"]}/{update_listener.region_count}")
-                        await interaction.followup.send(embed=embed)
+                        await interaction.channel.send(embed=embed)
                     except Exception:
-                        await interaction.followup.send(f"An error occurred, please try again.")
+                        await interaction.channel.send(f"An error occurred, please try again.")
                         break
                     break
                 else:
-                    await interaction.followup.send(f"No more regions found, update is over! Quitting tag session.")
+                    await interaction.channel.send(f"No more regions found, update is over! Quitting tag session.")
                     run.session = None
                     run.point = None
                     return

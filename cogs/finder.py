@@ -203,11 +203,11 @@ class RegionFinder(commands.Cog):
             view.add_item(skip_button)
             view.add_item(end_button)
 
-            await interaction.followup.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: {delay}s", view=view, ephemeral=guilds.should_be_ephemeral(interaction))
+            await interaction.channel.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: {delay}s", view=view, ephemeral=guilds.should_be_ephemeral(interaction))
 
             await view.wait()
 
             if should_finish:
                 return
 
-        await interaction.followup.send(f"No more regions found!", ephemeral=guilds.should_be_ephemeral(interaction))
+        await interaction.channel.send(f"No more regions found!", ephemeral=guilds.should_be_ephemeral(interaction))
