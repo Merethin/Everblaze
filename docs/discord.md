@@ -195,6 +195,12 @@ Starts a tag raiding session. In this session, Everblaze will repeatedly wait fo
 
 Everblaze will keep track of new delegates and will record when a point nation becomes the delegate of a region automatically. To view this list, run `/hits`.
 
+### ```/hits (global: False)```
+
+List all regions that have been hit in the current tag session (this means that **the nation that was set as point in this channel**, _and not any other_ became the delegate of a target region).
+
+If `global` is True, lists hits across all tag sessions in this server.
+
 ### ```/triggers```
 
 Display the current trigger list.
@@ -233,3 +239,9 @@ Added with `/add_target`, `/select`, and `/snipe`.
 - Message triggers
 
 If any of the previous commands are given a `message` parameter, it will completely override the message sent when the regions update. The functionality remains the same.
+
+## Miscellaneous Commands
+
+### ```/lastupdate```
+
+Prints the last recorded region update.

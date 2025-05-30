@@ -110,6 +110,8 @@ def parse_region_data(filename: str) -> typing.List[typing.Tuple]:
         delendos = int(region.find("DELEGATEVOTES").text) - 1 # Delegate Votes = Delegate Endos + 1
         executive = int("X" in region.find("DELEGATEAUTH").text) # 1 for Executive, 0 for Non-Executive
         wfe = region.find("FACTBOOK").text
+        if wfe is None:
+            wfe = ""
 
         # Apparently last update isn't accurate enough. Calculate update times based on average update time per nation.
         seconds_major = int(cumulative_nations * major_secs_per_nation)

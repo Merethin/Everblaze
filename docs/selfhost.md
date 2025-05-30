@@ -23,7 +23,7 @@ Check "Send Messages", "Embed Links", "Mention Everyone", and "Use Slash Command
 After this, you can copy the "generated URL" given to you by Discord. This is the install link for your bot. Paste it in your browser, select a server, and you're done. Now run the bot.
 
 ```
-python bot.py -n <NATION_NAME> -r -s 3600
+python bot.py -n <NATION_NAME> -r -e 3600
 ```
 
-The `-s` flag will self-reset the bot a given number of seconds after the end of update, it may only work on POSIX hosts though. In this case, the bot would reset one hour after each update. If the `-r` flag is set when originally running the bot, it will be set again when it is reset, and therefore will regenerate the database on every reset.
+The `-e` flag will exit the bot a given number of seconds after the end of update. It is recommended to combine this with a service manager to restart the bot again with the `-r` flag set, ensuring the database is refreshed after every update.
