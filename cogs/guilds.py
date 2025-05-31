@@ -63,7 +63,7 @@ class GuildManager(commands.Cog):
         embassy_blacklist = ";".join(guild.embassy_blacklist)
         wfe_blacklist = ";".join(guild.wfe_blacklist)
     
-        data = (id, guild.setup_role.id, embassy_blacklist, wfe_blacklist)
+        data = (id, guild.setup_role, embassy_blacklist, wfe_blacklist)
         cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
         database.bot_db.commit()
 
