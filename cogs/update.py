@@ -99,7 +99,7 @@ class UpdateListener(commands.Cog):
         triggers.trigger_map = {}
 
         if self.exit_delay is not None:
-            print(f"[everblaze] starting exit timer... terminating in {self.self_reset_delay} seconds")
+            print(f"[everblaze] starting exit timer... terminating in {self.exit_delay} seconds")
 
             await asyncio.sleep(self.exit_delay)
 
