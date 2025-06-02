@@ -18,7 +18,7 @@ from cogs.lock import TargetLock
 VERSION = "0.2.0"
 
 class EverblazeBot(commands.Bot):
-    def __init__(self, bot_db: sqlite3.Connection, everblaze_db: sqlite3.Connection, exit_delay: typing.Optional[int]):
+    def __init__(self, bot_db: sqlite3.Connection, everblaze_db: sqlite3.Connection, exit_delay: typing.Optional[int], nation: str):
         intents: discord.Intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True
@@ -31,6 +31,7 @@ class EverblazeBot(commands.Bot):
         self.bot_db = bot_db
         self.everblaze_db = everblaze_db
         self.exit_delay = exit_delay
+        self.nation = util.format_nation_or_region(nation)
 
     async def sse_loop(self):
         client = sans.AsyncClient()
@@ -53,7 +54,7 @@ class EverblazeBot(commands.Bot):
         await self.add_cog(BlacklistManager(self))
         await self.add_cog(TriggerManager(self))
         await self.add_cog(RegionFinder(self))
-        await self.add_cog(TagManager(self))
+        await self.add_cog(TagManager(self, self.nation))
         await self.add_cog(TargetLock(self))
         await self.add_cog(UpdateListener(self, self.exit_delay))
 
@@ -171,7 +172,7 @@ def main() -> None:
     bot_db = sqlite3.connect("bot.db")
     create_tables_if_needed(bot_db)
 
-    bot = EverblazeBot(bot_db, everblaze_db, args.exit_delay)
+    bot = EverblazeBot(bot_db, everblaze_db, args.exit_delay, args.nation_name)
 
     settings = dotenv_values(".env")
     bot.run(settings["TOKEN"])

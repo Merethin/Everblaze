@@ -19,8 +19,9 @@ class TagRun:
     hits: list[tuple[str, str]]
 
 class TagManager(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot: commands.Bot, nation: str):
         self.bot = bot
+        self.nation = nation
         self.runs: dict[int, TagRun] = {}
 
     @app_commands.command(description="Start a tag run session.")
@@ -214,7 +215,7 @@ class TagManager(commands.Cog):
                     try:
                         embed = discord.Embed()
                         text = "%" * 400
-                        embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none)"
+                        embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
                         embed.set_footer(text=f"Move to target: {target}, estimated delay: {gap_delay + min_delay}s - {region["update_index"]}/{update_listener.region_count}")
                         await interaction.channel.send(embed=embed)
                     except Exception:
