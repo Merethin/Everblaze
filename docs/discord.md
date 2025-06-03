@@ -181,17 +181,17 @@ Starts a tag raiding session. In this session, Everblaze will repeatedly wait fo
 
 **Commands (messages sent during a session):**
 
-`t https://www.nationstates.net/nation=NATION_NAME`: Sets NATION_NAME as point, waits for all participants to endorse it, and then posts a target.
+`https://www.nationstates.net/nation=NATION_NAME`: Sets NATION_NAME as point, waits for all participants to endorse it, and then posts a target.
 
-`quit`: Quits the current tag raiding session.
+`q`: Quits the current tag raiding session.
 
-`miss`: Skips the provided target and finds a new one.
+`m`: Skips the provided target and finds a new one.
 
-`endos ENDOS`: Sets the number of endorsements expected on the point to ENDOS endorsements.
+`eX`: Sets the number of endorsements expected on the point to X endorsements.
 
-`switch SWITCH`: Sets the minimum switch time to SWITCH seconds.
+`sX`: Sets the minimum switch time to X seconds.
 
-`delay DELAY`: Sets the optimal trigger time to DELAY seconds.
+`dX`: Sets the optimal trigger time to X seconds.
 
 Everblaze will keep track of new delegates and will record when a point nation becomes the delegate of a region automatically. To view this list, run `/hits`.
 

@@ -70,55 +70,51 @@ class TagManager(commands.Cog):
             op = await self.bot.wait_for(
                 "message",
                 check=lambda x: x.channel.id == interaction.channel.id
-                and (x.content.lower().startswith("t")
-                or x.content.lower() == "quit"
-                or x.content.lower() == "miss"
-                or x.content.lower().startswith("endos")
-                or x.content.lower().startswith("delay")
-                or x.content.lower().startswith("switch")),
+                and (x.content.lower().startswith("http")
+                or x.content.lower() == "q"
+                or x.content.lower() == "m"
+                or x.content.lower().startswith("e")
+                or x.content.lower().startswith("d")
+                or x.content.lower().startswith("s")),
                 timeout=None,
             )
 
             endos = 0
 
-            if op.content.lower().startswith("t"):
+            if op.content.lower().startswith("http"):
                 # Point provided. Fetch nation name
-                match = re.match(r"t[\s]+http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_\- ]+)", op.content.lower())
+                match = re.match(r"http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_\- ]+)", op.content.lower())
                 if match is not None:
                     nation = util.format_nation_or_region(match.groups()[0])
                     run.point = nation
                 else:
                     continue
-            elif op.content.lower() == "miss":
+            elif op.content.lower() == "m":
                 # Don't wait for all nations to endorse the point, it's already endorsed
                 endos = point_endos + 1
             else:
-                if op.content.lower() == "quit":
+                if op.content.lower() == "q":
                     await interaction.channel.send(f"Quitting the tag session.")
                     run.session = None
                     run.point = None
                     cursor.close()
                     return
-                elif op.content.lower().startswith("endos"):
-                    match = re.match(r"endos[\s]+([0-9]+)", op.content.lower())
+                elif op.content.lower().startswith("e"):
+                    match = re.match(r"e([0-9]+)", op.content.lower())
                     if match is not None:
                         point_endos = int(match.groups()[0])
                         await interaction.channel.send(f"Point endos changed to {point_endos}.")
-                elif op.content.lower().startswith("delay"):
-                    match = re.match(r"delay[\s]+([0-9]+)", op.content.lower())
+                elif op.content.lower().startswith("d"):
+                    match = re.match(r"d([0-9]+)", op.content.lower())
                     if match is not None:
                         min_delay = int(match.groups()[0])
                         await interaction.channel.send(f"Minimum delay changed to {min_delay}s (up to {min_delay+2}s)")
-                elif op.content.lower().startswith("switch"):
-                    match = re.match(r"switch[\s]+([0-9]+)", op.content.lower())
+                elif op.content.lower().startswith("s"):
+                    match = re.match(r"s([0-9]+)", op.content.lower())
                     if match is not None:
                         switch_time = int(match.groups()[0])
                         await interaction.channel.send(f"Switch time changed to {switch_time}s")
                 continue
-
-            message: typing.Optional[discord.WebhookMessage] = None
-            if endos < point_endos:
-                message = await interaction.channel.send(f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})")
 
             def check_point(data: typing.Tuple[str, str]) -> bool:
                 nonlocal nation
@@ -126,7 +122,6 @@ class TagManager(commands.Cog):
                 return target == nation
             
             while endos < point_endos:
-                task = None
                 (event, _) = await self.bot.wait_for(
                     "wa",
                     check=check_point,
@@ -134,10 +129,6 @@ class TagManager(commands.Cog):
                 )
                 if event == "endo":
                     endos += 1
-                    if message is not None:
-                        if task is not None:
-                            task.cancel()
-                        task = asyncio.create_task(message.edit(content=f"Waiting for everyone to endorse {nation} before posting target... ({endos}/{point_endos})"))
                 elif event == "unendo":
                     asyncio.create_task(interaction.channel.send(f"{nation} has been unendorsed, canceling. Waiting for another command."))
                     run.point = None
@@ -239,8 +230,7 @@ class TagManager(commands.Cog):
             guild = self.bot.get_guild(channel.guild_id)
 
             if tag_run.point == point:
-                role = guild.get_role(channel.ping_role)
-                guild.get_channel(channel_id).send(f"{role.mention} {region} hit!")
+                guild.get_channel(channel_id).send(f"{region} hit!")
                 tag_run.hits.append((region, point))
                 tag_run.point = None
 
