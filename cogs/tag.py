@@ -5,8 +5,8 @@ from .update import UpdateListener
 from .db import Database
 from .blacklist import BlacklistManager
 from .lock import TargetLock
-from .triggers import compose_trigger
-import discord, typing, asyncio, re, time, math
+from .triggers import compose_trigger, TriggerManager
+import discord, typing, asyncio, re, time, math, io
 import utility as util
 from dataclasses import dataclass
 from pagination import Pagination
@@ -17,6 +17,7 @@ class TagRun:
     coroutine: typing.Awaitable[None]
     point: typing.Optional[str]
     hits: list[tuple[str, str]]
+    jump_point: str
 
 class TagManager(commands.Cog):
     def __init__(self, bot: commands.Bot, nation: str):
@@ -25,8 +26,9 @@ class TagManager(commands.Cog):
         self.runs: dict[int, TagRun] = {}
 
     @app_commands.command(description="Start a tag run session.")
-    async def tag(self, interaction: discord.Interaction, update: str, point_endos: int, switch_time: int, min_delay: int) -> None:
+    async def tag(self, interaction: discord.Interaction, update: str, jump_point: str, point_endos: int) -> None:
         guilds: GuildManager = self.bot.get_cog('GuildManager')
+        database: Database = self.bot.get_cog('Database')
 
         if not await guilds.check_channel_setup_role(interaction):
             return
@@ -35,29 +37,45 @@ class TagManager(commands.Cog):
             await interaction.response.send_message(f"There is already a tag session ongoing in this channel!", ephemeral=True)
             return
         
-        run = TagRun(self.run_tag(interaction, update, point_endos, switch_time, min_delay), None, [])
+        jp_data = database.fetch_region_data(jump_point)
+        if jp_data is None:
+            await interaction.response.send_message(f"Jump point {jump_point} not found!")
+            return
+        
+        jp_index = jp_data["update_index"]
+        
+        run = TagRun(self.run_tag(interaction, update, point_endos, jp_index), None, [], jump_point)
         self.runs[interaction.channel.id] = run
 
         await run.coroutine
 
-    async def run_tag(self, interaction: discord.Interaction, update: str, point_endos: int, switch_time: int, min_delay: int) -> None:
+    DEFAULT_DELAY_TIME = 6
+    DEFAULT_TRIGGER_TIME = 3
+
+    async def run_tag(self, interaction: discord.Interaction, update: str, point_endos: int, jp_index: int) -> None:
         update_listener: UpdateListener = self.bot.get_cog('UpdateListener')
         guilds: GuildManager = self.bot.get_cog('GuildManager')
         database: Database = self.bot.get_cog('Database')
         blacklist: BlacklistManager = self.bot.get_cog('BlacklistManager')
         target_lock: TargetLock = self.bot.get_cog('TargetLock')
+        triggers: TriggerManager = self.bot.get_cog('TriggerManager')
 
         run = self.runs[interaction.channel.id]
+
+        delay_time = self.DEFAULT_DELAY_TIME
+        trigger_time = self.DEFAULT_TRIGGER_TIME
+
+        await interaction.response.send_message(f"Set parameters: {point_endos} endorsements on point, {delay_time}s delay (by default), {trigger_time}s trigger (by default). Run eX, dX, or tX to change.")
         
         if update_listener.last_update is None:
-            await interaction.response.send_message(f"Waiting for {update} to start (waiting for any region to update)...")
+            await interaction.channel.send(f"Waiting for {update} to start (waiting for any region to update)...")
             await self.bot.wait_for(
                 "region_update",
                 timeout=None,
             )
-            await interaction.channel.send(f"Started tag run for {update}. Please post the point and start endorsing.")
+            await interaction.channel.send(f"Started tag run for {update}, post the point and start endorsing.")
         else:
-            await interaction.response.send_message(f"Started tag run for {update}. Please post the point and start endorsing.")
+            await interaction.channel.send(f"Started tag run for {update}, post the point and start endorsing.")
 
         minor = util.is_minor(update)
         nation = ""
@@ -75,7 +93,7 @@ class TagManager(commands.Cog):
                 or x.content.lower() == "m"
                 or x.content.lower().startswith("e")
                 or x.content.lower().startswith("d")
-                or x.content.lower().startswith("s")),
+                or x.content.lower().startswith("t")),
                 timeout=None,
             )
 
@@ -103,17 +121,17 @@ class TagManager(commands.Cog):
                     match = re.match(r"e([0-9]+)", op.content.lower())
                     if match is not None:
                         point_endos = int(match.groups()[0])
-                        await interaction.channel.send(f"Point endos changed to {point_endos}.")
+                        await interaction.channel.send(f"Point endos changed to {point_endos}")
                 elif op.content.lower().startswith("d"):
                     match = re.match(r"d([0-9]+)", op.content.lower())
                     if match is not None:
-                        min_delay = int(match.groups()[0])
-                        await interaction.channel.send(f"Minimum delay changed to {min_delay}s (up to {min_delay+2}s)")
-                elif op.content.lower().startswith("s"):
-                    match = re.match(r"s([0-9]+)", op.content.lower())
+                        delay_time = int(match.groups()[0])
+                        await interaction.channel.send(f"Minimum delay changed to {delay_time}s")
+                elif op.content.lower().startswith("t"):
+                    match = re.match(r"t([0-9]+)", op.content.lower())
                     if match is not None:
-                        switch_time = int(match.groups()[0])
-                        await interaction.channel.send(f"Switch time changed to {switch_time}s")
+                        trigger_time = int(match.groups()[0])
+                        await interaction.channel.send(f"Minimum trigger time changed to {trigger_time}s")
                 continue
 
             def check_point(data: typing.Tuple[str, str]) -> bool:
@@ -139,8 +157,6 @@ class TagManager(commands.Cog):
                     break
             else:
                 last_update = update_listener.last_update
-                assert last_update
-
                 start = last_update.index
 
                 raidable_regions = util.find_raidable_regions(cursor, point_endos, start)
@@ -151,17 +167,19 @@ class TagManager(commands.Cog):
                 else:
                     last_update_time = last_update.major
 
-                time_since_last_update = time.time() - last_update.time
-                target_update_time = math.ceil(last_update_time + time_since_last_update + switch_time + min_delay)
-
-                search_start_time = time.time()
+                time_since_last_update = time.time() - last_update.real_time
+                target_minimum_update_time = math.ceil(last_update_time + time_since_last_update + delay_time)
 
                 for region in raidable_regions:
-                    last_update = update_listener.last_update
-                    assert last_update
-
                     if(region["update_index"] <= last_update.index):
                         continue
+
+                    if(region["update_index"] > jp_index):
+                        await interaction.channel.send(f"No more regions found before jump point! Quitting tag session.")
+                        run.session = None
+                        run.point = None
+                        cursor.close()
+                        return
 
                     update_time: int = 0
                     if minor:
@@ -169,25 +187,10 @@ class TagManager(commands.Cog):
                     else:
                         update_time = region["seconds_major"]
 
-                    if blacklist.check_blacklist(guild, region):
+                    if update_time < target_minimum_update_time:
                         continue
 
-                    # Large region is probably updating. Let's wait until it ends and then find a more reliable trigger/target.
-                    while (update_time - target_update_time) > 2 or time_since_last_update > 1.5:
-                        await asyncio.sleep(0.1) # Wait for a bit longer before finding a target.
-
-                        last_update = update_listener.last_update
-                        assert last_update
-
-                        if minor:
-                            last_update_time = last_update.minor
-                        else:
-                            last_update_time = last_update.major
-
-                        time_since_last_update = time.time() - last_update.time
-                        target_update_time = math.ceil(last_update_time + time_since_last_update + switch_time + min_delay)
-
-                    if update_time < target_update_time:
+                    if blacklist.check_blacklist(guild, region):
                         continue
 
                     target = region["api_name"]
@@ -195,19 +198,29 @@ class TagManager(commands.Cog):
                     if not target_lock.lock(interaction.guild.id, compose_trigger("", target=target)):
                         continue
 
-                    search_time = time.time() - search_start_time
-                    remaining_time = switch_time - search_time
+                    trigger = util.find_region_updating_at_time(cursor, update_time - trigger_time, minor, 0, 0)
+                    if trigger is None:
+                        target_lock.unlock(interaction.guild.id, compose_trigger("", target=target))
+                        continue
 
-                    gap_delay = (update_time - target_update_time)
+                    delay = 0
+                    if minor:
+                        delay = region["seconds_minor"] - trigger["seconds_minor"]
+                    else:
+                        delay = region["seconds_major"] - trigger["seconds_major"]
 
-                    if remaining_time > 0:
-                        await asyncio.sleep(remaining_time)
+                    time_to_region = (update_time - target_minimum_update_time)
+
+                    targets = triggers.get_trigger_list(interaction)
+
+                    targets.add_trigger(compose_trigger(trigger["api_name"], target=target, delay=delay, message="GO!"))
+                    targets.sort_triggers(cursor)
 
                     try:
                         embed = discord.Embed()
                         text = "%" * 400
                         embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
-                        embed.set_footer(text=f"Move to target: {target}, estimated delay: {gap_delay + min_delay}s - {region["update_index"]}/{update_listener.region_count}")
+                        embed.set_footer(text=f"Target: {target}, delay: {time_to_region}s, trigger: {trigger_time}s - {region["update_index"]}/{update_listener.region_count}")
                         await interaction.channel.send(embed=embed)
                     except Exception:
                         await interaction.channel.send(f"An error occurred, please try again.")
@@ -217,6 +230,7 @@ class TagManager(commands.Cog):
                     await interaction.channel.send(f"No more regions found, update is over! Quitting tag session.")
                     run.session = None
                     run.point = None
+                    cursor.close()
                     return
 
     @commands.Cog.listener()
@@ -230,12 +244,13 @@ class TagManager(commands.Cog):
             guild = self.bot.get_guild(channel.guild_id)
 
             if tag_run.point == point:
-                guild.get_channel(channel_id).send(f"{region} hit!")
-                tag_run.hits.append((region, point))
                 tag_run.point = None
+                if tag_run.jump_point != region:
+                    tag_run.hits.append((region, point))
+                    await guild.get_channel(channel_id).send(f"{region} hit! Good job.")
 
     @app_commands.command(description="List regions hit during a tag run.")
-    async def hits(self, interaction: discord.Interaction, all_channels: bool = False):
+    async def hits(self, interaction: discord.Interaction, all_channels: bool = False, bbcode: bool = False):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
 
         if not await guilds.check_channel_setup_role(interaction):
@@ -248,26 +263,21 @@ class TagManager(commands.Cog):
                 if guilds.get_channel(channel_id).guild_id == interaction.guild.id:
                     hit_list += run.hits
         else:
-            hit_list += self.runs[interaction.guild_id].hits
+            hit_list += self.runs[interaction.channel.id].hits
 
         if(len(hit_list) == 0):
             await interaction.response.send_message(f"No regions hit!", ephemeral=guilds.should_be_ephemeral(interaction))
             return
+        
+        data = ""
 
-        ELEMENTS_PER_PAGE = 10
+        for (region, point) in hit_list:
+            if bbcode:
+                data += f"[url=https://www.nationstates.net/region={region}]{region}[/url]\n"
+            else:
+                data += f"https://www.nationstates.net/region={region} hit by https://www.nationstates.net/nation={point}\n"
 
-        if(len(hit_list) > ELEMENTS_PER_PAGE):
-            async def get_page(page: int):
-                emb = discord.Embed(title="Targets Hit", description="")
-                offset = (page-1) * ELEMENTS_PER_PAGE
-                for (region, point) in hit_list[offset:offset+ELEMENTS_PER_PAGE]:
-                    emb.description += f"[{region}](https://www.nationstates.net/region={region}) hit by {point}\n"
-                n = Pagination.compute_total_pages(len(hit_list), ELEMENTS_PER_PAGE)
-                emb.set_footer(text=f"Page {page} of {n}")
-                return emb, n
+        buf = io.BytesIO(bytes(data, "utf-8"))
+        f = discord.File(buf, "hits.txt")
 
-            await Pagination(interaction, get_page).navigate()
-            return
-
-        list = "\n".join([f"[{region}](https://www.nationstates.net/region={region}) hit by {point}" for (region, point) in hit_list])
-        await interaction.response.send_message(list, ephemeral=guilds.should_be_ephemeral(interaction))
+        await interaction.channel.send(file=f)

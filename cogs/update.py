@@ -4,7 +4,7 @@ from .guilds import GuildManager
 from .db import Database
 from .triggers import TriggerManager
 from .lock import TargetLock
-import discord, typing, asyncio, os, sys
+import discord, typing, asyncio, sys
 import utility as util
 from dataclasses import dataclass
 
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 @dataclass
 class LastUpdate:
     index: int # The index of the region in update.
-    time: float # The UNIX timestamp at which the region updated.
+    real_time: float # The UNIX timestamp at which the region updated.
     minor: int # The predicted timestamp at which the region would update during minor update.
     major: int # The predicted timestamp at which the region would update during major update.
 
