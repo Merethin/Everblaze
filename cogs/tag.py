@@ -209,7 +209,7 @@ class TagManager(commands.Cog):
                     else:
                         delay = region["seconds_major"] - trigger["seconds_major"]
 
-                    time_to_region = (update_time - target_minimum_update_time)
+                    time_to_region = update_time - (last_update_time + time_since_last_update)
 
                     targets = triggers.get_trigger_list(interaction)
 
@@ -280,4 +280,4 @@ class TagManager(commands.Cog):
         buf = io.BytesIO(bytes(data, "utf-8"))
         f = discord.File(buf, "hits.txt")
 
-        await interaction.channel.send(file=f)
+        await interaction.response.send_message(file=f)
