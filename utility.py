@@ -51,59 +51,43 @@ def fetch_region_data_with_index(cursor: sqlite3.Cursor, index: int) -> typing.D
 # If minor is set to true, will use minor update times. Otherwise, will use major update times.
 # If early_tolerance is nonzero, it is the number of seconds before <delay> that a region is permitted to update at in order to be returned, if there is no exact match.
 # If late_tolerance is nonzero, it is the number of seconds after <delay> that a region is permitted to update at in order to be returned, if there is no exact match.
-def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: int, minor: bool, early_tolerance: int, late_tolerance: int) -> typing.Dict | None:
+def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: float, minor: bool, early_tolerance: float, late_tolerance: float) -> typing.Dict | None:
+    if early_tolerance < 0.3:
+        early_tolerance = 0.3 # minimum threshold
+        
+    if late_tolerance < 0.3:
+        late_tolerance = 0.3 # minimum threshold
+
+    print("dbg: Searching for regions w/ delay %.2f, + %.2f - %.2f (%.2f to %.2f)" % (delay, early_tolerance, late_tolerance, delay-early_tolerance, delay+late_tolerance))
+
     if minor:
-        cursor.execute("SELECT * FROM regions WHERE seconds_minor = ?", [delay])
+        cursor.execute("SELECT * FROM regions WHERE seconds_minor > ? AND seconds_minor < ?", [delay-early_tolerance, delay+late_tolerance])
     else:
-        cursor.execute("SELECT * FROM regions WHERE seconds_major = ?", [delay])
+        cursor.execute("SELECT * FROM regions WHERE seconds_major > ? AND seconds_major < ?", [delay-early_tolerance, delay+late_tolerance])
 
-    data = cursor.fetchone()
-    if data is None:
-        # If there is no exact match, check for surrounding times
-        if early_tolerance != 0 or late_tolerance != 0:
-            start = delay - early_tolerance
-            end = delay + late_tolerance
-
-            early_region = None
-            for time in range(delay - 1, start - 1, -1):
-                early_region = find_region_updating_at_time(cursor, time, minor, 0, 0)
-                if early_region is not None:
-                    break
-
-            late_region = None
-            for time in range(delay + 1, end + 1):
-                late_region = find_region_updating_at_time(cursor, time, minor, 0, 0)
-                if late_region is not None:
-                    break
-
-            if late_region is None: # If the other is None, we just return None.
-                return early_region
-            
-            if early_region is None: # Can't return None, already checked
-                return late_region
-            
-            # Check which one is better
-            early_time = 0
-            late_time = 0
-
-            if minor:
-                early_time = early_region["seconds_minor"]
-                late_time = late_region["seconds_minor"]
-            else:
-                early_time = early_region["seconds_major"]
-                late_time = late_region["seconds_major"]
-
-            early_delay = delay - early_time
-            late_delay = late_time - delay
-
-            if early_delay < late_delay:
-                return early_region
-            
-            return late_region
-                
+    data = cursor.fetchall()
+    if len(data) == 0:
         return None
     
-    return format_database_data(data)
+    best_match = None
+    best_interval = 999999
+
+    for region in data:
+        region_data = format_database_data(region)
+        interval = 0
+        if minor:
+            interval = abs(delay - region_data["seconds_minor"])
+            print(f"dbg: candidate {region_data["api_name"]}, %.2f interval, %.2f minor time" % (interval, region_data["seconds_minor"]))
+        else:
+            interval = abs(delay - region_data["seconds_major"])
+            print(f"dbg: candidate {region_data["api_name"]}, %.2f interval, %.2f major time" % (interval, region_data["seconds_major"]))
+        if interval < best_interval:
+            best_interval = interval
+            best_match = region_data
+
+    print(f"dbg: picked candidate {best_match["api_name"]}")
+
+    return best_match
 
 # Return a list of all regions that have less endorsements than a point nation and have an executive delegacy.
 def find_raidable_regions(cursor: sqlite3.Cursor, point_endos: int, start: int = -1, require_governorless: bool = False) -> typing.List[typing.Dict]:

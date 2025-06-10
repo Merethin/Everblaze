@@ -24,13 +24,15 @@ def compose_trigger(api_name: str, target: typing.Optional[str] = None, delay: t
 
     return trigger
 
-# Format a number of seconds as a string "HH:MM:SS"
-def format_time(seconds: int) -> str:
+# Format a number of seconds, with fractional parts, as a string "HH:MM:SS.XX"
+def format_time(timestamp: float) -> str:
+    seconds = int(timestamp)
+    fractional = timestamp - seconds
     minutes = seconds // 60
     seconds = seconds % 60
     hours = minutes // 60
     minutes = minutes % 60
-    return "{:02d}:{:02d}:{:02d}".format(hours, minutes, seconds)
+    return "{:02d}:{:02d}:{:02d}.{:02d}".format(hours, minutes, seconds, int(fractional*100))
 
 # Manage per-channel triggers, add them, remove them, react to them.
 class TriggerManager(commands.Cog):
@@ -69,7 +71,7 @@ class TriggerManager(commands.Cog):
         if "target" not in trigger.keys():
             return f"[{trigger["api_name"]}](https://www.nationstates.net/region={trigger["api_name"]}) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
         
-        return f"[{trigger["target"]}](https://www.nationstates.net/region={trigger["target"]}) ({data["canon_name"]};{trigger["delay"]}s) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}"
+        return f"[{trigger["target"]}](https://www.nationstates.net/region={trigger["target"]}) ({data["canon_name"]};%.2fs) - {format_time(data["seconds_minor"])} minor, {format_time(data["seconds_major"])} major{message_shown}" % trigger["delay"]
     
     # Format a string with a link to a trigger.
     def display_trigger_simple(self, trigger: typing.Dict) -> str:

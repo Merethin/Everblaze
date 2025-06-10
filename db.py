@@ -5,14 +5,6 @@ import xml.etree.ElementTree as ET
 import time, calendar, sqlite3, typing, datetime, gzip, os, sans
 import utility as util
 
-# Strip the minutes and seconds from a UNIX timestamp.
-# Example: given the following timestamp,
-# 1745165862 (Sunday, April 20, 2025 4:17:42 PM)
-# the function will return 1745164800 (Sunday, April 20, 2025 4:00:00 PM)
-def strip_minutes_and_seconds(timestamp: int) -> int:
-    tm = time.gmtime(timestamp)
-    return calendar.timegm(tm) - (tm.tm_min*60 + tm.tm_sec)
-
 # Fetch a list of all passworded regions from the NationStates API and return it as a list of API-compatible region names.
 def fetch_passworded_regions() -> typing.List[str]:
     query = sans.World("regionsbytag", tags="password")
@@ -114,8 +106,8 @@ def parse_region_data(filename: str) -> typing.List[typing.Tuple]:
             wfe = ""
 
         # Apparently last update isn't accurate enough. Calculate update times based on average update time per nation.
-        seconds_major = int(cumulative_nations * major_secs_per_nation)
-        seconds_minor = int(cumulative_nations * minor_secs_per_nation)
+        seconds_major = cumulative_nations * major_secs_per_nation
+        seconds_minor = cumulative_nations * minor_secs_per_nation
         cumulative_nations += int(region.find("NUMNATIONS").text)
 
         # Simple enough

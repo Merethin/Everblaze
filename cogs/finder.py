@@ -33,7 +33,7 @@ class RegionFinder(commands.Cog):
         self.bot = bot
 
     @app_commands.command(description="Find a trigger for a selected target.")
-    async def snipe(self, interaction: discord.Interaction, target: str, update: str, ideal_delay: int, early_tolerance: int, late_tolerance: int, message: typing.Optional[str]):
+    async def snipe(self, interaction: discord.Interaction, target: str, update: str, ideal_delay: float, early_tolerance: float, late_tolerance: float, message: typing.Optional[str]):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
         database: Database = self.bot.get_cog('Database')
         triggers: TriggerManager = self.bot.get_cog('TriggerManager')
@@ -53,6 +53,10 @@ class RegionFinder(commands.Cog):
             trigger_time = region_data["seconds_minor"] - ideal_delay
         else:
             trigger_time = region_data["seconds_major"] - ideal_delay
+
+        if trigger_time < 0:
+            await interaction.response.send_message(f"No trigger for {target} found in the specified time range!", ephemeral=guilds.should_be_ephemeral(interaction))
+            return
 
         cursor = database.everblaze_db.cursor()
 
@@ -78,7 +82,7 @@ class RegionFinder(commands.Cog):
         await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: {delay}s)", ephemeral=guilds.should_be_ephemeral(interaction))
 
     @app_commands.command(description="Find and select targets with no password and an executive delegate.")
-    async def select(self, interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: int, ideal_delay: int, early_tolerance: int, late_tolerance: int, message: typing.Optional[str], confirm: bool = True):
+    async def select(self, interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: float, ideal_delay: float, early_tolerance: float, late_tolerance: float, message: typing.Optional[str], confirm: bool = True):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
         database: Database = self.bot.get_cog('Database')
         triggers: TriggerManager = self.bot.get_cog('TriggerManager')
@@ -95,7 +99,7 @@ class RegionFinder(commands.Cog):
         
         minor = util.is_minor(update)
 
-        guild = guilds[interaction.guild.id]
+        guild = guilds.guilds[interaction.guild.id]
 
         last_update = update_listener.last_update
 
@@ -105,7 +109,7 @@ class RegionFinder(commands.Cog):
 
         raidable_regions = util.find_raidable_regions(cursor, point_endos, start)
 
-        last_switch_time = -999
+        last_switch_time: float = -999
 
         if last_update is not None:
             if minor:
@@ -134,6 +138,9 @@ class RegionFinder(commands.Cog):
 
             target = region["api_name"]
             trigger_time = update_time - ideal_delay
+
+            if trigger_time < 0:
+                continue
 
             if target_lock.is_locked(interaction.guild.id, compose_trigger("", target=target)):
                 continue
@@ -180,7 +187,7 @@ class RegionFinder(commands.Cog):
 
                 last_switch_time = update_time
 
-                await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for target {target} (delay: {delay}s)", ephemeral=guilds.should_be_ephemeral(interaction))
+                await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for target {target} (delay: %.2fs)" % delay, ephemeral=guilds.should_be_ephemeral(interaction))
 
                 view.stop()
             
@@ -203,11 +210,11 @@ class RegionFinder(commands.Cog):
             view.add_item(skip_button)
             view.add_item(end_button)
 
-            await interaction.channel.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: {delay}s", view=view, ephemeral=guilds.should_be_ephemeral(interaction))
+            await interaction.followup.send(f"Target: https://www.nationstates.net/region={target}\nTrigger: {trigger["api_name"]}\nDelay: %.2fs" % delay, view=view, ephemeral=guilds.should_be_ephemeral(interaction))
 
             await view.wait()
 
             if should_finish:
                 return
 
-        await interaction.channel.send(f"No more regions found!", ephemeral=guilds.should_be_ephemeral(interaction))
+        await interaction.followup.send(f"No more regions found!", ephemeral=guilds.should_be_ephemeral(interaction))

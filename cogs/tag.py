@@ -65,7 +65,7 @@ class TagManager(commands.Cog):
         delay_time = self.DEFAULT_DELAY_TIME
         trigger_time = self.DEFAULT_TRIGGER_TIME
 
-        await interaction.response.send_message(f"Set parameters: {point_endos} endorsements on point, {delay_time}s delay (by default), {trigger_time}s trigger (by default). Run eX, dX, or tX to change.")
+        await interaction.response.send_message(f"Set parameters: {point_endos} endorsements on point, %.2fs delay (by default), %.2fs trigger (by default). Run eX, dX, or tX to change." % (delay_time, trigger_time))
         
         if update_listener.last_update is None:
             await interaction.channel.send(f"Waiting for {update} to start (waiting for any region to update)...")
@@ -123,15 +123,15 @@ class TagManager(commands.Cog):
                         point_endos = int(match.groups()[0])
                         await interaction.channel.send(f"Point endos changed to {point_endos}")
                 elif op.content.lower().startswith("d"):
-                    match = re.match(r"d([0-9]+)", op.content.lower())
+                    match = re.match(r"d([0-9]+(?:\.[0-9]+)?)", op.content.lower())
                     if match is not None:
-                        delay_time = int(match.groups()[0])
-                        await interaction.channel.send(f"Minimum delay changed to {delay_time}s")
+                        delay_time = float(match.groups()[0])
+                        await interaction.channel.send(f"Minimum delay changed to %.2fs" % delay_time)
                 elif op.content.lower().startswith("t"):
-                    match = re.match(r"t([0-9]+)", op.content.lower())
+                    match = re.match(r"t([0-9]+(?:\.[0-9]+)?)", op.content.lower())
                     if match is not None:
-                        trigger_time = int(match.groups()[0])
-                        await interaction.channel.send(f"Minimum trigger time changed to {trigger_time}s")
+                        trigger_time = float(match.groups()[0])
+                        await interaction.channel.send(f"Trigger time changed to %.2fs" % trigger_time)
                 continue
 
             def check_point(data: typing.Tuple[str, str]) -> bool:
@@ -190,6 +190,9 @@ class TagManager(commands.Cog):
                     if update_time < target_minimum_update_time:
                         continue
 
+                    if update_time < trigger_time:
+                        continue
+
                     if blacklist.check_blacklist(guild, region):
                         continue
 
@@ -198,7 +201,7 @@ class TagManager(commands.Cog):
                     if not target_lock.lock(interaction.guild.id, compose_trigger("", target=target)):
                         continue
 
-                    trigger = util.find_region_updating_at_time(cursor, update_time - trigger_time, minor, 0, 0)
+                    trigger = util.find_region_updating_at_time(cursor, update_time - trigger_time, minor, 0, 1)
                     if trigger is None:
                         target_lock.unlock(interaction.guild.id, compose_trigger("", target=target))
                         continue
@@ -220,7 +223,7 @@ class TagManager(commands.Cog):
                         embed = discord.Embed()
                         text = "%" * 400
                         embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
-                        embed.set_footer(text=f"Target: {target}, delay: {time_to_region}s, trigger: {trigger_time}s - {region["update_index"]}/{update_listener.region_count}")
+                        embed.set_footer(text=f"Target: {target}, delay: %.2fs, trigger: %.2fs - {region["update_index"]}/{update_listener.region_count}" % (time_to_region, delay))
                         await interaction.channel.send(embed=embed)
                     except Exception:
                         await interaction.channel.send(f"An error occurred, please try again.")

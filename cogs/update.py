@@ -14,8 +14,8 @@ from dataclasses import dataclass
 class LastUpdate:
     index: int # The index of the region in update.
     real_time: float # The UNIX timestamp at which the region updated.
-    minor: int # The predicted timestamp at which the region would update during minor update.
-    major: int # The predicted timestamp at which the region would update during major update.
+    minor: float # The predicted timestamp at which the region would update during minor update.
+    major: float # The predicted timestamp at which the region would update during major update.
 
 # Listen for region updates, dispatch them to TriggerManager, keep track of the last registered region update, and trigger self-termination after update's over.
 class UpdateListener(commands.Cog):
