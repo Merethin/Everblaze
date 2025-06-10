@@ -35,15 +35,18 @@ class EverblazeBot(commands.Bot):
 
     async def sse_loop(self):
         client = sans.AsyncClient()
-        async for event in sans.serversent_events(client, "admin", "endo", "member"):
-            response = parse_sse_event(event)
+        while True:
+            async for event in sans.serversent_events(client, "admin", "endo", "member"):
+                response = parse_sse_event(event)
 
-            if response is None:
-                continue
-                
-            (event, data) = response
+                if response is None:
+                    continue
+                    
+                (event, data) = response
 
-            self.dispatch(event, data)
+                self.dispatch(event, data)
+
+            print("log: SSE disconnected, attempting to reconnect")
 
     async def setup_hook(self):
         loop = asyncio.get_event_loop()
