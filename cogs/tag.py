@@ -14,16 +14,28 @@ from pagination import Pagination
 # Stores information about and manages a tagging run.
 @dataclass
 class TagRun:
-    coroutine: typing.Awaitable[None]
-    point: typing.Optional[str]
-    hits: list[tuple[str, str]]
-    jump_point: str
+    coroutine: typing.Awaitable[None] # The main coroutine of the tagging loop, which waits for commands.
+    point: typing.Optional[str] # The current point, to track hits.
+    tracked_nation: typing.Optional[str] # The current tracked nation, to track endorsements and WA activity.
+    hits: list[tuple[str, str]] # List of registered hits and points who hit said targets.
+    jump_point: str # Jump point used for this tag run.
+    jp_index: int # Update index of the jump point.
+    point_endos: int # Endorsements required to post a target.
+    delay_time: float # Delay from target posting to updating.
+    trigger_time: float # Optimal trigger time.
+    endos: int # Current tracked endorsements on the tracked nation.
+    guild_id: int # Guild where the tag run is operating.
+    channel_id: int # Channel where the tag run is operating.
+    minor: bool # Whether we're doing minor or major update.
 
 class TagManager(commands.Cog):
     def __init__(self, bot: commands.Bot, nation: str):
         self.bot = bot
         self.nation = nation
         self.runs: dict[int, TagRun] = {}
+
+    DEFAULT_DELAY_TIME = 6.0
+    DEFAULT_TRIGGER_TIME = 2.5
 
     @app_commands.command(description="Start a tag run session.")
     async def tag(self, interaction: discord.Interaction, update: str, jump_point: str, point_endos: int) -> None:
@@ -34,9 +46,11 @@ class TagManager(commands.Cog):
             return
         
         if interaction.channel.id in self.runs.keys():
-            await interaction.response.send_message(f"There is already a tag session ongoing in this channel!", ephemeral=True)
-            return
-        
+            if self.runs[interaction.channel.id].coroutine is not None:
+                await interaction.response.send_message(f"There is already a tag session ongoing in this channel!", ephemeral=True)
+                return
+            
+        jump_point = util.format_nation_or_region(jump_point)
         jp_data = database.fetch_region_data(jump_point)
         if jp_data is None:
             await interaction.response.send_message(f"Jump point {jump_point} not found!")
@@ -44,197 +58,216 @@ class TagManager(commands.Cog):
         
         jp_index = jp_data["update_index"]
         
-        run = TagRun(self.run_tag(interaction, update, point_endos, jp_index), None, [], jump_point)
+        run = TagRun(self.run_tag(interaction), 
+                     None, None, [], 
+                     jump_point, 
+                     jp_index, 
+                     point_endos, 
+                     self.DEFAULT_DELAY_TIME, 
+                     self.DEFAULT_TRIGGER_TIME, 
+                     0, interaction.guild.id, interaction.channel.id, util.is_minor(update))
+        
         self.runs[interaction.channel.id] = run
 
-        await run.coroutine
+        try:
+            await run.coroutine
+        finally:
+            run.coroutine = None
 
-    DEFAULT_DELAY_TIME = 6
-    DEFAULT_TRIGGER_TIME = 3
-
-    async def run_tag(self, interaction: discord.Interaction, update: str, point_endos: int, jp_index: int) -> None:
-        update_listener: UpdateListener = self.bot.get_cog('UpdateListener')
-        guilds: GuildManager = self.bot.get_cog('GuildManager')
-        database: Database = self.bot.get_cog('Database')
-        blacklist: BlacklistManager = self.bot.get_cog('BlacklistManager')
-        target_lock: TargetLock = self.bot.get_cog('TargetLock')
-        triggers: TriggerManager = self.bot.get_cog('TriggerManager')
-
+    # Main loop of a tag run.
+    async def run_tag(self, interaction: discord.Interaction) -> None:
         run = self.runs[interaction.channel.id]
 
-        delay_time = self.DEFAULT_DELAY_TIME
-        trigger_time = self.DEFAULT_TRIGGER_TIME
-
-        await interaction.response.send_message(f"Set parameters: {point_endos} endorsements on point, %.2fs delay (by default), %.2fs trigger (by default). Run eX, dX, or tX to change." % (delay_time, trigger_time))
-        
-        if update_listener.last_update is None:
-            await interaction.channel.send(f"Waiting for {update} to start (waiting for any region to update)...")
-            await self.bot.wait_for(
-                "region_update",
-                timeout=None,
-            )
-            await interaction.channel.send(f"Started tag run for {update}, post the point and start endorsing.")
-        else:
-            await interaction.channel.send(f"Started tag run for {update}, post the point and start endorsing.")
-
-        minor = util.is_minor(update)
-        nation = ""
-
-        guild = guilds.get_guild(interaction.guild.id)
-
-        cursor = database.everblaze_db.cursor()
+        await interaction.response.send_message(f"Set parameters: {run.point_endos} endorsements on point, %.2fs delay (by default), %.2fs trigger (by default). Run eX, dX, or tX to change." % (run.delay_time, run.trigger_time))
 
         while True:
             op = await self.bot.wait_for(
                 "message",
                 check=lambda x: x.channel.id == interaction.channel.id
-                and (x.content.lower().startswith("http")
-                or x.content.lower() == "q"
-                or x.content.lower() == "m"
-                or x.content.lower().startswith("e")
-                or x.content.lower().startswith("d")
-                or x.content.lower().startswith("t")),
+                and (x.content.lower().startswith("http") # TRACK NATION
+                or x.content.lower() == "q" # QUIT
+                or x.content.lower() == "l" # LAUNCH
+                or x.content.lower() == "u" # UNTRACK
+                or x.content.lower().startswith("e") # update ENDOS
+                or x.content.lower().startswith("d") # update DELAY
+                or x.content.lower().startswith("t")), # update TRIGGER
                 timeout=None,
             )
 
-            endos = 0
-
+            # TRACK NATION: Extract the nation name from a link and start tracking it for WA activity.
             if op.content.lower().startswith("http"):
-                # Point provided. Fetch nation name
-                match = re.match(r"http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_\- ]+)", op.content.lower())
+                if run.tracked_nation is None:
+                    match = re.match(r"http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_\- ]+)", op.content.lower())
+                    if match is not None:
+                        run.endos = 0
+                        run.tracked_nation = util.format_nation_or_region(match.groups()[0])
+            # LAUNCH: Make the tracked nation point and fetch a target, 
+            # regardless of how many endorsements the tracked nation has.
+            elif op.content.lower() == "l":
+                if run.tracked_nation is not None:
+                    run.point = run.tracked_nation
+                    run.tracked_nation = None
+                    asyncio.create_task(self.select_target(run))
+            # UNTRACK: Stop tracking the current tracked nation.
+            elif op.content.lower() == "u":
+                if run.tracked_nation is not None:
+                    nation = run.tracked_nation
+                    run.tracked_nation = None
+                    asyncio.create_task(interaction.channel.send(f"Stopped tracking {nation} because of manual command."))
+            # QUIT: Exit the tag run.
+            elif op.content.lower() == "q":
+                await interaction.channel.send(f"Quitting the tag session.")
+                run.session = None
+                run.tracked_nation = None
+                run.point = None
+                return
+            # update ENDOS: Change the required endorsements to post target. 
+            # If the tracked nation now fulfills these requirements, post target immediately.
+            elif op.content.lower().startswith("e"):
+                match = re.match(r"e([0-9]+)", op.content.lower())
                 if match is not None:
-                    nation = util.format_nation_or_region(match.groups()[0])
-                    run.point = nation
-                else:
-                    continue
-            elif op.content.lower() == "m":
-                # Don't wait for all nations to endorse the point, it's already endorsed
-                endos = point_endos + 1
-            else:
-                if op.content.lower() == "q":
-                    await interaction.channel.send(f"Quitting the tag session.")
-                    run.session = None
-                    run.point = None
-                    cursor.close()
-                    return
-                elif op.content.lower().startswith("e"):
-                    match = re.match(r"e([0-9]+)", op.content.lower())
-                    if match is not None:
-                        point_endos = int(match.groups()[0])
-                        await interaction.channel.send(f"Point endos changed to {point_endos}")
-                elif op.content.lower().startswith("d"):
-                    match = re.match(r"d([0-9]+(?:\.[0-9]+)?)", op.content.lower())
-                    if match is not None:
-                        delay_time = float(match.groups()[0])
-                        await interaction.channel.send(f"Minimum delay changed to %.2fs" % delay_time)
-                elif op.content.lower().startswith("t"):
-                    match = re.match(r"t([0-9]+(?:\.[0-9]+)?)", op.content.lower())
-                    if match is not None:
-                        trigger_time = float(match.groups()[0])
-                        await interaction.channel.send(f"Trigger time changed to %.2fs" % trigger_time)
+                    run.point_endos = int(match.groups()[0])
+                    asyncio.create_task(op.add_reaction("✅"))
+                    if run.endos >= run.point_endos:
+                        run.point = run.tracked_nation
+                        run.tracked_nation = None
+                        asyncio.create_task(self.select_target(run))
+            # update DELAY: Updates the minimum delay between sending a target and its update time.
+            elif op.content.lower().startswith("d"):
+                match = re.match(r"d([0-9]+(?:\.[0-9]+)?)", op.content.lower())
+                if match is not None:
+                    run.delay_time = float(match.groups()[0])
+                    asyncio.create_task(op.add_reaction("✅"))
+            # update TRIGGER: Updates the optimal trigger time.
+            elif op.content.lower().startswith("t"):
+                match = re.match(r"t([0-9]+(?:\.[0-9]+)?)", op.content.lower())
+                if match is not None:
+                    run.trigger_time = float(match.groups()[0])
+                    asyncio.create_task(op.add_reaction("✅"))
+
+    # Look for a target, register it in Everblaze's trigger framework, and post it.
+    # Called either when the LAUNCH command is given or the tracked nation reaches the endo requirement.
+    async def select_target(self, run: TagRun) -> None:
+        update_listener: UpdateListener = self.bot.get_cog('UpdateListener')
+        blacklist: BlacklistManager = self.bot.get_cog('BlacklistManager')
+        target_lock: TargetLock = self.bot.get_cog('TargetLock')
+        triggers: TriggerManager = self.bot.get_cog('TriggerManager')
+        database: Database = self.bot.get_cog('Database')
+        guilds: GuildManager = self.bot.get_cog('GuildManager')
+
+        cursor = database.everblaze_db.cursor()
+        guild = guilds.get_guild(run.guild_id)
+        channel = self.bot.get_channel(run.channel_id)
+
+        last_update = update_listener.last_update
+        if last_update is None:
+            await channel.send("Can't give you a target, update hasn't started yet!\n"
+                               "Or at least, Everblaze hasn't gotten any region update events.\n"
+                               "Please wait until update starts and then run 'l' to launch.")
+            # Restore tracked_nation so that we can go back to watching it for WA activity and run L.
+            run.tracked_nation = run.point
+            run.point = None
+            return
+        
+        raidable_regions = util.find_raidable_regions(cursor, run.point_endos, last_update.index)
+
+        last_update_time = 0
+        if run.minor:
+            last_update_time = last_update.minor
+        else:
+            last_update_time = last_update.major
+
+        time_since_last_update = time.time() - last_update.real_time
+        target_minimum_update_time = math.ceil(last_update_time + time_since_last_update + run.delay_time)
+
+        for region in raidable_regions:
+            if(region["update_index"] <= last_update.index):
                 continue
 
-            def check_point(data: typing.Tuple[str, str]) -> bool:
-                nonlocal nation
-                (_, target) = data
-                return target == nation
-            
-            while endos < point_endos:
-                (event, _) = await self.bot.wait_for(
-                    "wa",
-                    check=check_point,
-                    timeout=None,
-                )
-                if event == "endo":
-                    endos += 1
-                elif event == "unendo":
-                    asyncio.create_task(interaction.channel.send(f"{nation} has been unendorsed, canceling. Waiting for another command."))
-                    run.point = None
-                    break
-                elif event == "resign":
-                    asyncio.create_task(interaction.channel.send(f"{nation} has resigned from the WA, canceling. Waiting for another command."))
-                    run.point = None
-                    break
+            if(region["update_index"] > run.jp_index):
+                await channel.send(f"No more regions found before jump point! Quitting tag session.")
+                run.session.cancel()
+                run.session = None
+                run.tracked_nation = None
+                run.point = None
+                break
+
+            update_time: int = 0
+            if run.minor:
+                update_time = region["seconds_minor"]
             else:
-                last_update = update_listener.last_update
-                start = last_update.index
+                update_time = region["seconds_major"]
 
-                raidable_regions = util.find_raidable_regions(cursor, point_endos, start)
+            if update_time < target_minimum_update_time:
+                continue
 
-                last_update_time = 0
-                if minor:
-                    last_update_time = last_update.minor
-                else:
-                    last_update_time = last_update.major
+            if update_time < run.trigger_time:
+                continue
 
-                time_since_last_update = time.time() - last_update.real_time
-                target_minimum_update_time = math.ceil(last_update_time + time_since_last_update + delay_time)
+            if blacklist.check_blacklist(guild, region):
+                continue
 
-                for region in raidable_regions:
-                    if(region["update_index"] <= last_update.index):
-                        continue
+            target = region["api_name"]
 
-                    if(region["update_index"] > jp_index):
-                        await interaction.channel.send(f"No more regions found before jump point! Quitting tag session.")
-                        run.session = None
-                        run.point = None
-                        cursor.close()
-                        return
+            if not target_lock.lock(run.guild_id, compose_trigger("", target=target)):
+                continue
 
-                    update_time: int = 0
-                    if minor:
-                        update_time = region["seconds_minor"]
-                    else:
-                        update_time = region["seconds_major"]
+            trigger = util.find_region_updating_at_time(cursor, update_time - run.trigger_time, run.minor, 0.5, 0.3)
+            if trigger is None:
+                target_lock.unlock(run.guild_id, compose_trigger("", target=target))
+                continue
 
-                    if update_time < target_minimum_update_time:
-                        continue
+            delay = 0
+            if run.minor:
+                delay = region["seconds_minor"] - trigger["seconds_minor"]
+            else:
+                delay = region["seconds_major"] - trigger["seconds_major"]
 
-                    if update_time < trigger_time:
-                        continue
+            time_to_region = update_time - (last_update_time + time_since_last_update)
 
-                    if blacklist.check_blacklist(guild, region):
-                        continue
+            targets = triggers.get_trigger_list_from_id(run.channel_id)
 
-                    target = region["api_name"]
+            targets.add_trigger(compose_trigger(trigger["api_name"], target=target, delay=delay, message="GO!"))
+            targets.sort_triggers(cursor)
 
-                    if not target_lock.lock(interaction.guild.id, compose_trigger("", target=target)):
-                        continue
+            try:
+                embed = discord.Embed()
+                text = "%" * 400
+                embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
+                embed.set_footer(text=f"Target: {target}, delay: %.2fs, trigger: %.2fs - {region["update_index"]}/{update_listener.region_count}" % (time_to_region, delay))
+                await channel.send(embed=embed)
+            except Exception:
+                await channel.send(f"An error occurred, please try again.")
+                break
+            break
+        else:
+            await channel.send(f"No more regions found, update is over! Quitting tag session.")
+            run.session.cancel()
+            run.session = None
+            run.tracked_nation = None
+            run.point = None
 
-                    trigger = util.find_region_updating_at_time(cursor, update_time - trigger_time, minor, 0.5, 0.3)
-                    if trigger is None:
-                        target_lock.unlock(interaction.guild.id, compose_trigger("", target=target))
-                        continue
+        cursor.close()
 
-                    delay = 0
-                    if minor:
-                        delay = region["seconds_minor"] - trigger["seconds_minor"]
-                    else:
-                        delay = region["seconds_major"] - trigger["seconds_major"]
-
-                    time_to_region = update_time - (last_update_time + time_since_last_update)
-
-                    targets = triggers.get_trigger_list(interaction)
-
-                    targets.add_trigger(compose_trigger(trigger["api_name"], target=target, delay=delay, message="GO!"))
-                    targets.sort_triggers(cursor)
-
-                    try:
-                        embed = discord.Embed()
-                        text = "%" * 400
-                        embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
-                        embed.set_footer(text=f"Target: {target}, delay: %.2fs, trigger: %.2fs - {region["update_index"]}/{update_listener.region_count}" % (time_to_region, delay))
-                        await interaction.channel.send(embed=embed)
-                    except Exception:
-                        await interaction.channel.send(f"An error occurred, please try again.")
-                        break
-                    break
-                else:
-                    await interaction.channel.send(f"No more regions found, update is over! Quitting tag session.")
-                    run.session = None
-                    run.point = None
-                    cursor.close()
-                    return
+    @commands.Cog.listener()
+    async def on_wa(self, event: typing.Tuple[str, str]):
+        (happening, nation) = event
+        
+        for channel_id, tag_run in self.runs.items():
+            if tag_run.tracked_nation == nation:
+                channel = self.bot.get_channel(channel_id)
+                if happening == "endo":
+                    tag_run.endos += 1
+                    if tag_run.endos >= tag_run.point_endos:
+                        tag_run.point = tag_run.tracked_nation
+                        tag_run.tracked_nation = None
+                        await self.select_target(tag_run)
+                elif happening == "unendo":
+                    tag_run.tracked_nation = None
+                    await channel.send(f"Stopped tracking {nation} as it has been unendorsed.")
+                elif happening == "resign":
+                    tag_run.tracked_nation = None
+                    await channel.send(f"Stopped tracking {nation} as it has resigned from the WA.")
 
     @commands.Cog.listener()
     async def on_delegate(self, event: typing.Tuple[str, int]):
