@@ -92,10 +92,10 @@ class GuildManager(commands.Cog):
     def get_channel(self, id: int) -> Channel:
         return self.channels[id]
 
-    # Checks whether a user is the server owner before running a command.
-    async def check_owner(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != interaction.guild.owner.id:
-            await interaction.response.send_message("Only the server owner can use this command.", ephemeral=True)
+    # Checks whether a user can manage the server before running a command.
+    async def check_manage_server(self, interaction: discord.Interaction) -> bool:
+        if not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message("Only a member with the 'Manage Server' permission can use this command.", ephemeral=True)
             return False
         return True
     
@@ -135,7 +135,7 @@ class GuildManager(commands.Cog):
 
     @app_commands.command(description="Configure the bot.")
     async def config(self, interaction: discord.Interaction, setup_role: discord.Role):
-        if not await self.check_owner(interaction):
+        if not await self.check_manage_server(interaction):
             return
         
         guild = Guild(setup_role.id, set(), set())
