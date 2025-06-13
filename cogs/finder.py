@@ -79,7 +79,7 @@ class RegionFinder(commands.Cog):
 
         cursor.close()
 
-        await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: {delay}s)", ephemeral=guilds.should_be_ephemeral(interaction))
+        await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: %.2fs)" % delay, ephemeral=guilds.should_be_ephemeral(interaction))
 
     @app_commands.command(description="Find and select targets with no password and an executive delegate.")
     async def select(self, interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: float, ideal_delay: float, early_tolerance: float, late_tolerance: float, message: typing.Optional[str], confirm: bool = True):

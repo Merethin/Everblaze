@@ -8,7 +8,7 @@ from .lock import TargetLock
 from pagination import Pagination
 
 # Compose a trigger dictionary with an arbitrary number of keyword arguments.
-def compose_trigger(api_name: str, target: typing.Optional[str] = None, delay: typing.Optional[int] = None, message: typing.Optional[str] = None) -> dict:
+def compose_trigger(api_name: str, target: typing.Optional[str] = None, delay: typing.Optional[float] = None, message: typing.Optional[str] = None) -> dict:
     trigger = {
         "api_name": api_name
     }
@@ -99,7 +99,7 @@ class TriggerManager(commands.Cog):
         await interaction.response.send_message(f"Added trigger {trigger}.", ephemeral=guilds.should_be_ephemeral(interaction))
 
     @app_commands.command(description="Add a new target and associated trigger.")
-    async def add_target(self, interaction: discord.Interaction, target: str, trigger: str, delay: int, message: typing.Optional[str]):
+    async def add_target(self, interaction: discord.Interaction, target: str, trigger: str, delay: float, message: typing.Optional[str]):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
 
         if not await guilds.check_channel_setup_role(interaction):

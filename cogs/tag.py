@@ -201,7 +201,7 @@ class TagManager(commands.Cog):
                     if not target_lock.lock(interaction.guild.id, compose_trigger("", target=target)):
                         continue
 
-                    trigger = util.find_region_updating_at_time(cursor, update_time - trigger_time, minor, 1, 0.3)
+                    trigger = util.find_region_updating_at_time(cursor, update_time - trigger_time, minor, 0.5, 0.3)
                     if trigger is None:
                         target_lock.unlock(interaction.guild.id, compose_trigger("", target=target))
                         continue
