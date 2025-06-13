@@ -2,8 +2,8 @@
 # Authored by Merethin, licensed under the BSD-2-Clause license.
 
 from dotenv import dotenv_values
-import discord, sqlite3, argparse, asyncio, typing, math, sys, sans
-from discord.ext import commands
+import discord, sqlite3, argparse, asyncio, typing, math, sys, sans, time
+from discord.ext import commands, tasks
 import utility as util
 
 from cogs.blacklist import BlacklistManager
@@ -37,6 +37,7 @@ class EverblazeBot(commands.Bot):
         client = sans.AsyncClient()
         while True:
             async for event in sans.serversent_events(client, "admin", "endo", "member"):
+                self.last_event = time.time()
                 response = parse_sse_event(event)
 
                 if response is None:
@@ -61,7 +62,17 @@ class EverblazeBot(commands.Bot):
         await self.add_cog(TargetLock(self))
         await self.add_cog(UpdateListener(self, self.exit_delay))
 
+        self.last_event = time.time()
         self.sse_task = asyncio.create_task(self.sse_loop())
+        self.check_stale_loop.start()
+
+    @tasks.loop(minutes=5)
+    async def check_stale_loop(self):
+        current_time = time.time()
+        if (current_time - self.last_event) > 300:
+            print("No SSE events in the last 5 minutes, restarting connection.")
+            self.sse_task.cancel()
+            self.sse_task = asyncio.create_task(self.sse_loop())
 
     async def on_ready(self):
         print(f'Everblaze: logged in as {self.user}')
