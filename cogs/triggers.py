@@ -197,7 +197,7 @@ class TriggerManager(commands.Cog):
             await interaction.response.send_message(f"No triggers set!", ephemeral=guilds.should_be_ephemeral(interaction))
             return
         
-        await interaction.response.send_message(f"Next {self.display_trigger_simple(targets.triggers[0])}", ephemeral=(self.should_be_ephemeral(interaction) and not visible))
+        await interaction.response.send_message(f"Next {self.display_trigger_simple(targets.triggers[0])}", ephemeral=(guilds.should_be_ephemeral(interaction) and not visible))
 
     @app_commands.command(description="Skip the next region to update in the trigger list.")
     async def skip(self, interaction: discord.Interaction):
