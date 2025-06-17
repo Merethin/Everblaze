@@ -58,8 +58,6 @@ def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: float, minor: bo
     if late_tolerance < 0.3:
         late_tolerance = 0.3 # minimum threshold
 
-    print("dbg: Searching for regions w/ delay %.2f, + %.2f - %.2f (%.2f to %.2f)" % (delay, early_tolerance, late_tolerance, delay-early_tolerance, delay+late_tolerance))
-
     if minor:
         cursor.execute("SELECT * FROM regions WHERE seconds_minor > ? AND seconds_minor < ?", [delay-early_tolerance, delay+late_tolerance])
     else:
@@ -77,15 +75,11 @@ def find_region_updating_at_time(cursor: sqlite3.Cursor, delay: float, minor: bo
         interval = 0
         if minor:
             interval = abs(delay - region_data["seconds_minor"])
-            print(f"dbg: candidate {region_data["api_name"]}, %.2f interval, %.2f minor time" % (interval, region_data["seconds_minor"]))
         else:
             interval = abs(delay - region_data["seconds_major"])
-            print(f"dbg: candidate {region_data["api_name"]}, %.2f interval, %.2f major time" % (interval, region_data["seconds_major"]))
         if interval < best_interval:
             best_interval = interval
             best_match = region_data
-
-    print(f"dbg: picked candidate {best_match["api_name"]}")
 
     return best_match
 
