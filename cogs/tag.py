@@ -290,19 +290,15 @@ class TagManager(commands.Cog):
 
     @commands.Cog.listener()
     async def on_delegate(self, event: typing.Tuple[str, int]):
-        guilds: GuildManager = self.bot.get_cog('GuildManager')
-
         (point, region) = event
         
         for channel_id, tag_run in self.runs.items():
-            channel = guilds.get_channel(channel_id)
-            guild = self.bot.get_guild(channel.guild_id)
-
             if tag_run.point == point:
+                channel = self.bot.get_channel(channel_id)
                 tag_run.point = None
                 if tag_run.jump_point != region:
                     tag_run.hits.append((region, point))
-                    await guild.get_channel(channel_id).send(f"{region} hit! Good job.")
+                    await channel.send(f"{region} hit! Good job.")
 
     @app_commands.command(description="List regions hit during a tag run.")
     async def hits(self, interaction: discord.Interaction, all_channels: bool = False, bbcode: bool = False):
