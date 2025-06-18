@@ -304,8 +304,21 @@ class TagManager(commands.Cog):
     async def hits(self, interaction: discord.Interaction, all_channels: bool = False, bbcode: bool = False):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
 
-        if not await guilds.check_channel_setup_role(interaction):
+        if not guilds.check_config(interaction):
             return
+        
+        if not all_channels:
+            if interaction.channel.id not in guilds.channels.keys():
+                await interaction.response.send_message("This channel is not configured. Tell a person with the appropriate role to run /addch first.", ephemeral=True)
+                return False
+
+            if not guilds.get_channel(interaction.channel.id).tag:
+                await interaction.response.send_message("This channel is not set up for tagging!", ephemeral=True)
+                return
+
+            if not interaction.channel.id in self.runs.keys():
+                await interaction.response.send_message(f"No regions hit!", ephemeral=guilds.should_be_ephemeral(interaction))
+                return
 
         hit_list = []
         
