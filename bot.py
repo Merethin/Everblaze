@@ -154,7 +154,7 @@ def create_tables_if_needed(bot_db: sqlite3.Connection) -> None:
 
     if channel_list == []:
         # Channel list doesn't exist, create it
-        bot_cursor.execute("CREATE TABLE channels(channel_id, guild_id, setup_role_id, ping_role_id, invisible)")
+        bot_cursor.execute("CREATE TABLE channels(channel_id, guild_id, setup_role_id, ping_role_id, invisible, tag)")
         bot_cursor.execute("CREATE UNIQUE INDEX idx_channel_id ON channels (channel_id);")
         bot_db.commit()
 

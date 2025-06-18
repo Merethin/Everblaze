@@ -14,7 +14,6 @@ from pagination import Pagination
 # Stores information about and manages a tagging run.
 @dataclass
 class TagRun:
-    coroutine: typing.Awaitable[None] # The main coroutine of the tagging loop, which waits for commands.
     point: typing.Optional[str] # The current point, to track hits.
     tracked_nation: typing.Optional[str] # The current tracked nation, to track endorsements and WA activity.
     hits: list[tuple[str, str]] # List of registered hits and points who hit said targets.
@@ -26,7 +25,8 @@ class TagRun:
     endos: int # Current tracked endorsements on the tracked nation.
     guild_id: int # Guild where the tag run is operating.
     channel_id: int # Channel where the tag run is operating.
-    minor: bool # Whether we're doing minor or major update.
+    update: str # Whether we're doing minor or major update.
+    fast: bool # Whether to use fast.nationstates.net links.
 
 class TagManager(commands.Cog):
     def __init__(self, bot: commands.Bot, nation: str):
@@ -37,113 +37,130 @@ class TagManager(commands.Cog):
     DEFAULT_DELAY_TIME = 6.0
     DEFAULT_TRIGGER_TIME = 2.5
 
-    @app_commands.command(description="Start a tag run session.")
-    async def tag(self, interaction: discord.Interaction, update: str, jump_point: str, point_endos: int) -> None:
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
         database: Database = self.bot.get_cog('Database')
 
-        if not await guilds.check_channel_setup_role(interaction):
+        if message.channel.id not in guilds.channels.keys():
+            return
+
+        if not guilds.get_channel(message.channel.id).tag:
             return
         
-        if interaction.channel.id in self.runs.keys():
-            if self.runs[interaction.channel.id].coroutine is not None:
-                await interaction.response.send_message(f"There is already a tag session ongoing in this channel!", ephemeral=True)
-                return
-            
-        jump_point = util.format_nation_or_region(jump_point)
-        jp_data = database.fetch_region_data(jump_point)
-        if jp_data is None:
-            await interaction.response.send_message(f"Jump point {jump_point} not found!")
-            return
-        
-        jp_index = jp_data["update_index"]
-        
-        run = TagRun(self.run_tag(interaction), 
-                     None, None, [], 
-                     jump_point, 
-                     jp_index, 
-                     point_endos, 
+        if not message.channel.id in self.runs.keys():
+            run = TagRun(None, None, [], "", 0, 1, 
                      self.DEFAULT_DELAY_TIME, 
                      self.DEFAULT_TRIGGER_TIME, 
-                     0, interaction.guild.id, interaction.channel.id, util.is_minor(update))
-        
-        self.runs[interaction.channel.id] = run
+                     0, message.guild.id, message.channel.id, "", True)
+            self.runs[message.channel.id] = run
 
-        try:
-            await run.coroutine
-        finally:
-            run.coroutine = None
+        run = self.runs[message.channel.id]
 
-    # Main loop of a tag run.
-    async def run_tag(self, interaction: discord.Interaction) -> None:
-        run = self.runs[interaction.channel.id]
-
-        await interaction.response.send_message(f"Set parameters: {run.point_endos} endorsements on point, %.2fs delay (by default), %.2fs trigger (by default). Run eX, dX, or tX to change." % (run.delay_time, run.trigger_time))
-
-        while True:
-            op = await self.bot.wait_for(
-                "message",
-                check=lambda x: x.channel.id == interaction.channel.id
-                and (x.content.lower().startswith("http") # TRACK NATION
-                or x.content.lower() == "q" # QUIT
-                or x.content.lower() == "l" # LAUNCH
-                or x.content.lower() == "u" # UNTRACK
-                or x.content.lower().startswith("e") # update ENDOS
-                or x.content.lower().startswith("d") # update DELAY
-                or x.content.lower().startswith("t")), # update TRIGGER
-                timeout=None,
-            )
-
-            # TRACK NATION: Extract the nation name from a link and start tracking it for WA activity.
-            if op.content.lower().startswith("http"):
-                if run.tracked_nation is None:
-                    match = re.match(r"http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-zA-Z0-9_\- ]+)", op.content.lower())
-                    if match is not None:
-                        run.endos = 0
-                        run.tracked_nation = util.format_nation_or_region(match.groups()[0])
-            # LAUNCH: Make the tracked nation point and fetch a target, 
-            # regardless of how many endorsements the tracked nation has.
-            elif op.content.lower() == "l":
-                if run.tracked_nation is not None:
-                    run.point = run.tracked_nation
-                    run.tracked_nation = None
-                    asyncio.create_task(self.select_target(run))
-            # UNTRACK: Stop tracking the current tracked nation.
-            elif op.content.lower() == "u":
-                if run.tracked_nation is not None:
-                    nation = run.tracked_nation
-                    run.tracked_nation = None
-                    asyncio.create_task(interaction.channel.send(f"Stopped tracking {nation} because of manual command."))
-            # QUIT: Exit the tag run.
-            elif op.content.lower() == "q":
-                await interaction.channel.send(f"Quitting the tag session.")
-                run.session = None
-                run.tracked_nation = None
-                run.point = None
+        # TRACK NATION: Extract the nation name from a link and start tracking it for WA activity.
+        if message.content.lower().startswith("http"):
+            if run.update == "":
+                await message.channel.send("Update is not configured.\n"
+                                           "Please type `set update minor` or `set update major` to select update.\n"
+                                           "Type `c` to view all settings for the current run.")
                 return
-            # update ENDOS: Change the required endorsements to post target. 
-            # If the tracked nation now fulfills these requirements, post target immediately.
-            elif op.content.lower().startswith("e"):
-                match = re.match(r"e([0-9]+)", op.content.lower())
+            if run.jp_index == 0:
+                await message.channel.send("Jump point is not configured.\n"
+                                           "Please type `set jp [NAME]` to select jump point.\n"
+                                           "Type `c` to view all settings for the current run.")
+                return
+            if run.tracked_nation is None:
+                match = re.match(r"http[s]?://(?:fast|www)\.nationstates\.net/nation=([a-z0-9_\- ]+)", message.content.lower())
                 if match is not None:
-                    run.point_endos = int(match.groups()[0])
-                    asyncio.create_task(op.add_reaction("✅"))
+                    run.endos = 0
+                    run.tracked_nation = util.format_nation_or_region(match.groups()[0])
+        # LAUNCH: Make the tracked nation point and fetch a target, 
+        # regardless of how many endorsements the tracked nation has.
+        elif message.content.lower() == "l":
+            if run.tracked_nation is not None:
+                run.point = run.tracked_nation
+                run.tracked_nation = None
+                await self.select_target(run)
+        # UNTRACK: Stop tracking the current tracked nation.
+        elif message.content.lower() == "u":
+            if run.tracked_nation is not None:
+                nation = run.tracked_nation
+                run.tracked_nation = None
+                await message.channel.send(f"Stopped tracking {nation} because of manual command.")
+        # CONFIG: View configuration and status.
+        elif message.content.lower() == "c":
+            update = run.update
+            if update == "":
+                update = "[unset]"
+            jump_point = run.jump_point
+            if jump_point == "":
+                jump_point = "[unset]"
+            domain = "www"
+            if run.fast:
+                domain = "fast"
+            wa_nation = run.tracked_nation
+            point_nation = run.point
+            if wa_nation is None:
+                wa_nation = "[none]"
+            if point_nation is None:
+                point_nation = "[none]"
+            await message.channel.send(f"Point endos: {run.point_endos}, minimum delay: %.2fs, trigger time: %.2fs\n"
+                                       f"Update: {update}, jump point: {jump_point}\n"
+                                       f"NS domain: {domain}.nationstates.net\n"
+                                       f"Currently watching: {wa_nation} for endorsements ({run.endos}/{run.point_endos}), {point_nation} for delegacy changes" % (run.delay_time, run.trigger_time))
+        # WWW: Set NS link domain to www.nationstates.net.
+        elif message.content.lower() == "www":
+            run.fast = False
+            await message.channel.send(f"Set NS domain to www.nationstates.net")
+        # FAST: Set NS link domain to fast.nationstates.net.
+        elif message.content.lower() == "fast":
+            run.fast = True
+            await message.channel.send(f"Set NS domain to fast.nationstates.net")
+        # update ENDOS: Change the required endorsements to post target. 
+        # If the tracked nation now fulfills these requirements, post target immediately.
+        elif message.content.lower().startswith("e"):
+            match = re.match(r"e([0-9]+)", message.content.lower())
+            if match is not None:
+                run.point_endos = int(match.groups()[0])
+                await message.channel.send(f"Point endos set to {run.point_endos}")
+                if run.tracked_nation is not None:
                     if run.endos >= run.point_endos:
                         run.point = run.tracked_nation
                         run.tracked_nation = None
-                        asyncio.create_task(self.select_target(run))
-            # update DELAY: Updates the minimum delay between sending a target and its update time.
-            elif op.content.lower().startswith("d"):
-                match = re.match(r"d([0-9]+(?:\.[0-9]+)?)", op.content.lower())
-                if match is not None:
-                    run.delay_time = float(match.groups()[0])
-                    asyncio.create_task(op.add_reaction("✅"))
-            # update TRIGGER: Updates the optimal trigger time.
-            elif op.content.lower().startswith("t"):
-                match = re.match(r"t([0-9]+(?:\.[0-9]+)?)", op.content.lower())
-                if match is not None:
-                    run.trigger_time = float(match.groups()[0])
-                    asyncio.create_task(op.add_reaction("✅"))
+                        await self.select_target(run)
+        # update DELAY: Updates the minimum delay between sending a target and its update time.
+        elif message.content.lower().startswith("d"):
+            match = re.match(r"d([0-9]+(?:\.[0-9]+)?)", message.content.lower())
+            if match is not None:
+                run.delay_time = float(match.groups()[0])
+                await message.channel.send("Minimum delay time set to %.2fs" % run.delay_time)
+        # update TRIGGER: Updates the optimal trigger time.
+        elif message.content.lower().startswith("t"):
+            match = re.match(r"t([0-9]+(?:\.[0-9]+)?)", message.content.lower())
+            if match is not None:
+                run.trigger_time = float(match.groups()[0])
+                await message.channel.send("Trigger time set to %.2fs" % run.trigger_time)
+        # set update|jp NAME: Set update and jump point settings.
+        elif message.content.lower().startswith("set"):
+            match = re.match(r"set\s(update|jp)\s([a-z0-9_\- ]+)", message.content.lower())
+            if match is not None:
+                subcommand = match.groups()[0]
+                if subcommand == "update":
+                    if util.is_minor(match.groups()[1]):
+                        run.update = "minor"
+                    else:
+                        run.update = "major"
+                    await message.channel.send(f"Update set to {run.update}")
+                else:
+                    jump_point = util.format_nation_or_region(match.groups()[1])
+                    jp_data = database.fetch_region_data(jump_point)
+                    if jp_data is None:
+                        await message.channel.send(f"Jump point {jump_point} not found!")
+                        return
+                    
+                    run.jump_point = jump_point
+                    run.jp_index = jp_data["update_index"]
+                    await message.channel.send(f"Jump point set to {jump_point}")
 
     # Look for a target, register it in Everblaze's trigger framework, and post it.
     # Called either when the LAUNCH command is given or the tracked nation reaches the endo requirement.
@@ -159,6 +176,8 @@ class TagManager(commands.Cog):
         guild = guilds.get_guild(run.guild_id)
         channel = self.bot.get_channel(run.channel_id)
 
+        minor = util.is_minor(run.update)
+
         last_update = update_listener.last_update
         if last_update is None:
             await channel.send("Can't give you a target, update hasn't started yet!\n"
@@ -172,7 +191,7 @@ class TagManager(commands.Cog):
         raidable_regions = util.find_raidable_regions(cursor, run.point_endos, last_update.index)
 
         last_update_time = 0
-        if run.minor:
+        if minor:
             last_update_time = last_update.minor
         else:
             last_update_time = last_update.major
@@ -185,15 +204,13 @@ class TagManager(commands.Cog):
                 continue
 
             if(region["update_index"] > run.jp_index):
-                await channel.send(f"No more regions found before jump point! Quitting tag session.")
-                run.session.cancel()
-                run.session = None
+                await channel.send(f"No more regions found before jump point! Stopped watching nations.")
                 run.tracked_nation = None
                 run.point = None
                 break
 
             update_time: int = 0
-            if run.minor:
+            if minor:
                 update_time = region["seconds_minor"]
             else:
                 update_time = region["seconds_major"]
@@ -212,13 +229,13 @@ class TagManager(commands.Cog):
             if not target_lock.lock(run.guild_id, compose_trigger("", target=target)):
                 continue
 
-            trigger = util.find_region_updating_at_time(cursor, update_time - run.trigger_time, run.minor, 0.8, 0.4)
+            trigger = util.find_region_updating_at_time(cursor, update_time - run.trigger_time, minor, 0.8, 0.4)
             if trigger is None:
                 target_lock.unlock(run.guild_id, compose_trigger("", target=target))
                 continue
 
             delay = 0
-            if run.minor:
+            if minor:
                 delay = region["seconds_minor"] - trigger["seconds_minor"]
             else:
                 delay = region["seconds_major"] - trigger["seconds_major"]
@@ -230,10 +247,14 @@ class TagManager(commands.Cog):
             targets.add_trigger(compose_trigger(trigger["api_name"], target=target, delay=delay, message="GO!"))
             targets.sort_triggers(cursor)
 
+            domain_prefix = "www"
+            if run.fast:
+                domain_prefix = "fast"
+
             try:
                 embed = discord.Embed()
                 text = "%" * 400
-                embed.description = f"[{text}](https://fast.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
+                embed.description = f"[{text}](https://{domain_prefix}.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
                 embed.set_footer(text=f"Target: {target}, delay: %.2fs, trigger: %.2fs - {region["update_index"]}/{update_listener.region_count}" % (time_to_region, delay))
                 await channel.send(embed=embed)
             except Exception:
@@ -241,9 +262,7 @@ class TagManager(commands.Cog):
                 break
             break
         else:
-            await channel.send(f"No more regions found, update is over! Quitting tag session.")
-            run.session.cancel()
-            run.session = None
+            await channel.send(f"No more regions found, update is over! Stopped watching nations.")
             run.tracked_nation = None
             run.point = None
 

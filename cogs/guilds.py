@@ -12,6 +12,7 @@ class Channel:
     setup_role: int # Role to add, remove, and view triggers.
     ping_role: int # Role to ping when triggers update.
     invisible: bool # Whether configuration messages should be ephemeral.
+    tag: bool # Whether the channel is used for tagging.
 
 # Stores settings for a guild.
 @dataclass
@@ -51,7 +52,7 @@ class GuildManager(commands.Cog):
 
         # Channel database format: channel_id, guild_id, setup_role_id, ping_role_id, invisible
         for channel in data:
-            self.channels[channel[0]] = Channel(channel[1], channel[2], channel[3], channel[4])
+            self.channels[channel[0]] = Channel(channel[1], channel[2], channel[3], channel[4], channel[5])
 
         cursor.close()
 
@@ -74,8 +75,8 @@ class GuildManager(commands.Cog):
         database: Database = self.bot.get_cog('Database')
         cursor = database.bot_db.cursor()
 
-        data = (id, channel.guild_id, channel.setup_role, channel.ping_role, channel.invisible)
-        cursor.execute("INSERT OR REPLACE INTO channels VALUES (?, ?, ?, ?, ?)", data)
+        data = (id, channel.guild_id, channel.setup_role, channel.ping_role, channel.invisible, channel.tag)
+        cursor.execute("INSERT OR REPLACE INTO channels VALUES (?, ?, ?, ?, ?, ?)", data)
         database.bot_db.commit()
 
         cursor.close()
@@ -150,16 +151,16 @@ class GuildManager(commands.Cog):
         await interaction.response.send_message("Server configuration updated!", ephemeral=True)
 
     @app_commands.command(description="Add a separate setup role and ping role to a channel.")
-    async def addch(self, interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, invisible: bool):
+    async def addch(self, interaction: discord.Interaction, setup_role: discord.Role, ping_role: discord.Role, invisible: bool, tag: bool):
         if not await self.check_guild_setup_role(interaction):
             return
         
-        channel = Channel(interaction.guild.id, setup_role.id, ping_role.id, invisible)
+        channel = Channel(interaction.guild.id, setup_role.id, ping_role.id, invisible, tag)
 
         self.sync_channel(interaction.channel.id, channel)
         self.channels[interaction.channel.id] = channel
 
-        print(f"Server configuration updated for guild {interaction.guild.name}, channel {interaction.channel.name}: Setup Role {setup_role.name}, Ping Role {ping_role.name}, Invisible {invisible}")
+        print(f"Server configuration updated for guild {interaction.guild.name}, channel {interaction.channel.name}: Setup Role {setup_role.name}, Ping Role {ping_role.name}, Invisible {invisible}, Tag {tag}")
 
         await interaction.response.send_message("Channel configuration updated!", ephemeral=True)
 
