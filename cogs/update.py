@@ -39,7 +39,7 @@ class UpdateListener(commands.Cog):
         if "target" not in trigger.keys():
             return f"{trigger["api_name"]} updated!"
         
-        return f"{trigger["target"]} will update in {trigger["delay"]}s ({trigger["api_name"]} updated)!"
+        return f"{trigger["target"]} will update in %.2fs ({trigger["api_name"]} updated)!" % trigger["delay"]
     
     # Generate region update messages to send to a given channel. They will all be collected and executed simultaneously using asyncio.gather()
     def update_region(self, api_name: str, last_update: LastUpdate, channel_id: int, ping_role: int, guild: discord.Guild, targets: util.TriggerList):

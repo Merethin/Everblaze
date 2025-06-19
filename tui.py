@@ -30,7 +30,7 @@ class CommandInput(Input):
     class SnipeTarget(Message):
         """Add a target to the trigger list (user-triggered), with a corresponding trigger <delay> seconds before."""
 
-        def __init__(self, target: str, update: str, delay: int, early_tolerance: int, late_tolerance: int) -> None:
+        def __init__(self, target: str, update: str, delay: float, early_tolerance: float, late_tolerance: float) -> None:
             self.target = target
             self.update = update
             self.delay = delay
@@ -54,18 +54,18 @@ class CommandInput(Input):
         if command[0] == "add" or command[0] == "+":
             self.app.post_message(self.AddTarget(util.format_nation_or_region(command[1])))
         if command[0] == "snipe":
-            match = re.match(r"([a-zA-Z0-9_\- ]+);(minor|major);([0-9]+)(s|m);([0-9]+);([0-9]+)", command[1])
+            match = re.match(r"([a-zA-Z0-9_\- ]+);(minor|major);([0-9]+(?:\.[0-9]+)?)(s|m);([0-9]+(?:\.[0-9]+)?);([0-9]+(?:\.[0-9]+)?)", command[1])
             if match is not None:
                 groups = match.groups()
                 region_name = groups[0]
                 update = groups[1]
-                delay = int(groups[2])
+                delay = float(groups[2])
                 seconds_or_minutes = groups[3]
                 if seconds_or_minutes == "m":
                     delay *= 60
                 early_tolerance = groups[4]
                 late_tolerance = groups[5]
-                self.app.post_message(self.SnipeTarget(util.format_nation_or_region(region_name), update, delay, int(early_tolerance), int(late_tolerance)))
+                self.app.post_message(self.SnipeTarget(util.format_nation_or_region(region_name), update, delay, float(early_tolerance), float(late_tolerance)))
             else:
                 self.app.get_widget_by_id("output", expect_type=OutputLog).post_message(OutputLog.WriteLog("\u2e30 Invalid command formatting (should be snipe <RegionName>;major|minor;<delay>s|m;<early>;<late>)."))
         elif command[0] == "remove" or command[0] == "-":
@@ -158,13 +158,13 @@ def display_trigger(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
         return trigger["api_name"]
     
-    return f"{trigger["target"]} ({trigger["api_name"]};{trigger["delay"]}s)"
+    return f"{trigger["target"]} ({trigger["api_name"]};%.2fs)" % trigger["delay"]
 
 def format_update_log(trigger: typing.Dict) -> str:
     if "target" not in trigger.keys():
         return f"\u2e30 {trigger["api_name"]} updated!"
     
-    return f"\u2e30 {trigger["target"]} will update in {trigger["delay"]}s ({trigger["api_name"]} updated)!"
+    return f"\u2e30 {trigger["target"]} will update in %.2fs ({trigger["api_name"]} updated)!" % trigger["delay"]
 
 # Trigger list widget
 # Renders a list of all active triggers (the global "targets" variable)
