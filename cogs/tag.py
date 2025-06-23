@@ -27,6 +27,7 @@ class TagRun:
     channel_id: int # Channel where the tag run is operating.
     update: str # Whether we're doing minor or major update.
     fast: bool # Whether to use fast.nationstates.net links.
+    target: typing.Optional[str] # The current target, to detect intercepts.
 
 class TagManager(commands.Cog):
     def __init__(self, bot: commands.Bot, nation: str):
@@ -104,10 +105,14 @@ class TagManager(commands.Cog):
                 wa_nation = "[none]"
             if point_nation is None:
                 point_nation = "[none]"
+            target = run.target
+            if target is None:
+                target = "[none]"
             await message.channel.send(f"Point endos: {run.point_endos}, minimum delay: %.2fs, trigger time: %.2fs\n"
                                        f"Update: {update}, jump point: {jump_point}\n"
                                        f"NS domain: {domain}.nationstates.net\n"
-                                       f"Currently watching: {wa_nation} for endorsements ({run.endos}/{run.point_endos}), {point_nation} for delegacy changes" % (run.delay_time, run.trigger_time))
+                                       f"Currently watching: {wa_nation} for endorsements ({run.endos}/{run.point_endos}), {point_nation} for delegacy changes\n" 
+                                       f"Current target: {target}" % (run.delay_time, run.trigger_time))
         # WWW: Set NS link domain to www.nationstates.net.
         elif message.content.lower() == "www":
             run.fast = False
@@ -207,6 +212,7 @@ class TagManager(commands.Cog):
                 await channel.send(f"No more regions found before jump point! Stopped watching nations.")
                 run.tracked_nation = None
                 run.point = None
+                run.target = None
                 break
 
             update_time: int = 0
@@ -247,6 +253,8 @@ class TagManager(commands.Cog):
             targets.add_trigger(compose_trigger(trigger["api_name"], target=target, delay=delay, message="GO!"))
             targets.sort_triggers(cursor)
 
+            run.target = target
+
             domain_prefix = "www"
             if run.fast:
                 domain_prefix = "fast"
@@ -265,6 +273,7 @@ class TagManager(commands.Cog):
             await channel.send(f"No more regions found, update is over! Stopped watching nations.")
             run.tracked_nation = None
             run.point = None
+            run.target = None
 
         cursor.close()
 
@@ -293,12 +302,20 @@ class TagManager(commands.Cog):
         (point, region) = event
         
         for channel_id, tag_run in self.runs.items():
-            if tag_run.point == point:
+            if tag_run.target == region:
+                tag_run.target = None
                 channel = self.bot.get_channel(channel_id)
-                tag_run.point = None
-                if tag_run.jump_point != region:
+                if tag_run.point == point:
+                    tag_run.point = None
                     tag_run.hits.append((region, point))
                     await channel.send(f"{region} hit! Good job.")
+                else:
+                    await channel.send(f"{region} intercepted! Be faster next time.")
+            elif tag_run.jump_point != region and tag_run.point == point:
+                channel = self.bot.get_channel(channel_id)
+                tag_run.point = None
+                tag_run.hits.append((region, point))
+                await channel.send(f"{region} hit! Not the one I was tracking, but good job.")
 
     @app_commands.command(description="List regions hit during a tag run.")
     async def hits(self, interaction: discord.Interaction, all_channels: bool = False, bbcode: bool = False):
