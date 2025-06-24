@@ -53,7 +53,7 @@ class TagManager(commands.Cog):
             run = TagRun(None, None, [], "", 0, 1, 
                      self.DEFAULT_DELAY_TIME, 
                      self.DEFAULT_TRIGGER_TIME, 
-                     0, message.guild.id, message.channel.id, "", True)
+                     0, message.guild.id, message.channel.id, "", True, None)
             self.runs[message.channel.id] = run
 
         run = self.runs[message.channel.id]
