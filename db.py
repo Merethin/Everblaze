@@ -123,8 +123,8 @@ def parse_region_data(filename: str) -> typing.List[typing.Tuple]:
         embassies = []
         for child in region.find("EMBASSIES"):
             if("type" in child.attrib.keys()):
-                if(child.attrib["type"] in ["denied", "rejected"]):
-                    # Skipping unwanted embassy
+                if(child.attrib["type"] in ["denied", "rejected", "closing"]):
+                    # Skipping unwanted/closed embassy
                     continue
                 if(child.attrib["type"] in ["requested", "pending", "invited"]):
                     pass # Add it nonetheless. We don't want to retag regions we've already tagged even if the embassy is pending.

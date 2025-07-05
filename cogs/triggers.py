@@ -214,8 +214,5 @@ class TriggerManager(commands.Cog):
         
         name = targets.triggers[0]["api_name"]
         trigger = targets.remove_trigger(name)
-
-        target_lock: TargetLock = self.bot.get_cog('TargetLock')
-        target_lock.unlock(interaction.guild.id, trigger)
         
         await interaction.response.send_message(f"Removed {self.display_trigger_simple(trigger)}")
