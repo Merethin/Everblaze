@@ -24,7 +24,9 @@ class Guild:
     wfe_whitelist: set[str] # WFE words/phrases to target.
 
 # Auxiliary function to split a string, removing empty strings, and making it into a set for convenience ^^
-def split_string_into_set(string: str, delim: str) -> set:
+def split_string_into_set(string: str | None, delim: str) -> set:
+    if string is None:
+        return set()
     return set([s for s in string.split(delim) if s.strip() != ''])
 
 # Manages bot-wide guild and channel settings and keeps them synced with the database.
