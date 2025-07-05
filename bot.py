@@ -146,7 +146,7 @@ def create_tables_if_needed(bot_db: sqlite3.Connection) -> None:
 
     if table_list == []:
         # Guild list doesn't exist, create it
-        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id, embassy_blacklist, wfe_blacklist)")
+        bot_cursor.execute("CREATE TABLE guilds(guild_id, setup_role_id, embassy_blacklist, wfe_blacklist, embassy_whitelist, wfe_whitelist)")
         bot_cursor.execute("CREATE UNIQUE INDEX idx_guild_id ON guilds (guild_id);")
         bot_db.commit()
 

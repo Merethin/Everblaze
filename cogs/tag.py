@@ -28,6 +28,7 @@ class TagRun:
     update: str # Whether we're doing minor or major update.
     fast: bool # Whether to use fast.nationstates.net links.
     target: typing.Optional[str] # The current target, to detect intercepts.
+    whitelist: bool # Whether to only include whitelisted regions.
 
 class TagManager(commands.Cog):
     def __init__(self, bot: commands.Bot, nation: str):
@@ -53,7 +54,7 @@ class TagManager(commands.Cog):
             run = TagRun(None, None, [], "", 0, 1, 
                      self.DEFAULT_DELAY_TIME, 
                      self.DEFAULT_TRIGGER_TIME, 
-                     0, message.guild.id, message.channel.id, "", True, None)
+                     0, message.guild.id, message.channel.id, "", True, None, False)
             self.runs[message.channel.id] = run
 
         run = self.runs[message.channel.id]
@@ -108,11 +109,15 @@ class TagManager(commands.Cog):
             target = run.target
             if target is None:
                 target = "[none]"
+            detag_status = "off"
+            if run.whitelist:
+                detag_status = "on"
             await message.channel.send(f"Point endos: {run.point_endos}, minimum delay: %.2fs, trigger time: %.2fs\n"
                                        f"Update: {update}, jump point: {jump_point}\n"
                                        f"NS domain: {domain}.nationstates.net\n"
                                        f"Currently watching: {wa_nation} for endorsements ({run.endos}/{run.point_endos}), {point_nation} for delegacy changes\n" 
-                                       f"Current target: {target}" % (run.delay_time, run.trigger_time))
+                                       f"Current target: {target}\n"
+                                       f"Detags: {detag_status}" % (run.delay_time, run.trigger_time))
         # WWW: Set NS link domain to www.nationstates.net.
         elif message.content.lower() == "www":
             run.fast = False
@@ -121,6 +126,16 @@ class TagManager(commands.Cog):
         elif message.content.lower() == "fast":
             run.fast = True
             await message.channel.send(f"Set NS domain to fast.nationstates.net")
+        # detags on|off: Change whether to only include whitelisted regions or not.
+        elif message.content.lower().startswith("detags"):
+            match = re.match(r"detags (on|off)", message.content.lower())
+            if match is not None:
+                if match.groups()[0] == "on":
+                    run.whitelist = True
+                    await message.channel.send(f"Activated detags")
+                else:
+                    run.whitelist = False
+                    await message.channel.send(f"Turned off detags")
         # update ENDOS: Change the required endorsements to post target. 
         # If the tracked nation now fulfills these requirements, post target immediately.
         elif message.content.lower().startswith("e"):
@@ -227,8 +242,12 @@ class TagManager(commands.Cog):
             if update_time < run.trigger_time:
                 continue
 
-            if blacklist.check_blacklist(guild, region):
-                continue
+            if run.whitelist:
+                if not blacklist.check_whitelist(guild, region):
+                    continue
+            else:
+                if blacklist.check_blacklist(guild, region):
+                    continue
 
             target = region["api_name"]
 

@@ -82,7 +82,7 @@ class RegionFinder(commands.Cog):
         await interaction.response.send_message(f"Set trigger {trigger["api_name"]} for {target} (delay: %.2fs)" % delay, ephemeral=guilds.should_be_ephemeral(interaction))
 
     @app_commands.command(description="Find and select targets with no password and an executive delegate.")
-    async def select(self, interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: float, ideal_delay: float, early_tolerance: float, late_tolerance: float, message: typing.Optional[str], confirm: bool = True):
+    async def select(self, interaction: discord.Interaction, update: str, point_endos: int, min_switch_time: float, ideal_delay: float, early_tolerance: float, late_tolerance: float, message: typing.Optional[str], whitelist: bool = False, confirm: bool = True):
         guilds: GuildManager = self.bot.get_cog('GuildManager')
         database: Database = self.bot.get_cog('Database')
         triggers: TriggerManager = self.bot.get_cog('TriggerManager')
@@ -133,8 +133,12 @@ class RegionFinder(commands.Cog):
             if (update_time - last_switch_time) < min_switch_time:
                 continue
 
-            if blacklist.check_blacklist(guild, region):
-                continue
+            if whitelist:
+                if not blacklist.check_whitelist(guild, region):
+                    continue
+            else:
+                if blacklist.check_blacklist(guild, region):
+                    continue
 
             target = region["api_name"]
             trigger_time = update_time - ideal_delay

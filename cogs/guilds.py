@@ -20,6 +20,8 @@ class Guild:
     setup_role: int # Role to set up trigger settings.
     embassy_blacklist: set[str] # Embassies to avoid targeting.
     wfe_blacklist: set[str] # WFE words/phrases to avoid targeting.
+    embassy_whitelist: set[str] # Embassies to target.
+    wfe_whitelist: set[str] # WFE words/phrases to target.
 
 # Auxiliary function to split a string, removing empty strings, and making it into a set for convenience ^^
 def split_string_into_set(string: str, delim: str) -> set:
@@ -42,9 +44,15 @@ class GuildManager(commands.Cog):
         cursor.execute("SELECT * FROM guilds")
         data = cursor.fetchall()
 
-        # Guild database format: guild_id, setup_role_id, embassy_blacklist (delimited by semicolons), wfe_blacklist (delimited by semicolons)
+        # Guild database format: guild_id, setup_role_id, 
+        # embassy_blacklist (delimited by semicolons), wfe_blacklist (delimited by semicolons)
+        # embassy_whitelist (delimited by semicolons), wfe_whitelist (delimited by semicolons)
         for guild in data:
-            self.guilds[guild[0]] = Guild(guild[1], split_string_into_set(guild[2], ';'), split_string_into_set(guild[3], ';'))
+            self.guilds[guild[0]] = Guild(guild[1], 
+                                          split_string_into_set(guild[2], ';'), 
+                                          split_string_into_set(guild[3], ';'),
+                                          split_string_into_set(guild[4], ';'),
+                                          split_string_into_set(guild[5], ';'))
 
         # Load channel data from the database
         cursor.execute("SELECT * FROM channels")
@@ -63,9 +71,11 @@ class GuildManager(commands.Cog):
 
         embassy_blacklist = ";".join(guild.embassy_blacklist)
         wfe_blacklist = ";".join(guild.wfe_blacklist)
+        embassy_whitelist = ";".join(guild.embassy_whitelist)
+        wfe_whitelist = ";".join(guild.wfe_whitelist)
     
-        data = (id, guild.setup_role, embassy_blacklist, wfe_blacklist)
-        cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?)", data)
+        data = (id, guild.setup_role, embassy_blacklist, wfe_blacklist, embassy_whitelist, wfe_whitelist)
+        cursor.execute("INSERT OR REPLACE INTO guilds VALUES (?, ?, ?, ?, ?, ?)", data)
         database.bot_db.commit()
 
         cursor.close()
@@ -139,7 +149,7 @@ class GuildManager(commands.Cog):
         if not await self.check_manage_server(interaction):
             return
         
-        guild = Guild(setup_role.id, set(), set())
+        guild = Guild(setup_role.id, set(), set(), set(), set())
         if interaction.guild.id in self.guilds.keys():
             guild = self.guilds[interaction.guild.id]
         
