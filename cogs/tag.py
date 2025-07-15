@@ -6,6 +6,7 @@ from .db import Database
 from .blacklist import BlacklistManager
 from .lock import TargetLock
 from .triggers import compose_trigger, TriggerManager
+from .update import LastUpdate
 import discord, typing, asyncio, re, time, math, io
 import utility as util
 from dataclasses import dataclass
@@ -200,13 +201,16 @@ class TagManager(commands.Cog):
 
         last_update = update_listener.last_update
         if last_update is None:
-            await channel.send("Can't give you a target, update hasn't started yet!\n"
-                               "Or at least, Everblaze hasn't gotten any region update events.\n"
-                               "Please wait until update starts and then run 'l' to launch.")
+            # await channel.send("Can't give you a target, update hasn't started yet!\n"
+            #                   "Or at least, Everblaze hasn't gotten any region update events.\n"
+            #                   "Please wait until update starts and then run 'l' to launch.")
             # Restore tracked_nation so that we can go back to watching it for WA activity and run L.
-            run.tracked_nation = run.point
-            run.point = None
-            return
+            # run.tracked_nation = run.point
+            # run.point = None
+            # return
+
+            # Yeah just pretend as if update had just started. For testing outside of update's sake.
+            last_update = LastUpdate(0, time.time(), 0, 0)
         
         raidable_regions = util.find_raidable_regions(cursor, run.point_endos, last_update.index)
 
@@ -282,7 +286,7 @@ class TagManager(commands.Cog):
                 embed = discord.Embed()
                 text = "%" * 400
                 embed.description = f"[{text}](https://{domain_prefix}.nationstates.net/region={target}/template-overall=none?generated_by=everblaze_discord_bot__by_merethin__ran_by_{self.nation})"
-                embed.set_footer(text=f"Target: {target}, delay: %.2fs, trigger: %.2fs - {region["update_index"]}/{update_listener.region_count}" % (time_to_region, delay))
+                embed.set_author(name=f"Target: {target}, delay: %.2fs, trigger: %.2fs - {region["update_index"]}/{update_listener.region_count}" % (time_to_region, delay))
                 await channel.send(embed=embed)
             except Exception:
                 await channel.send(f"An error occurred, please try again.")
